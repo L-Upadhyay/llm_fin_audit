@@ -1,0 +1,8 @@
+pandas
+numpy
+matplotlib
+yfinance
+agno
+ollama
+pytest
+rich
