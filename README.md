@@ -115,10 +115,21 @@ Modules exercised:
 
 ## 🤖 AI Tool Disclosure
 
-This project was scaffolded with the help of **Claude Code** (Anthropic). AI assistance was used for:
+This project was built using Claude Code (Anthropic) as a coding assistant, in line with BU MET academic-integrity policy on responsible AI use.
 
-- File scaffolding and boilerplate (project layout, test stubs, Streamlit wiring),
-- Test generation and refactoring suggestions,
-- Documentation drafting (this README, in-code comments).
+The student designed and directed every aspect of this project:
+- Identified the research problem (LLM hallucination in financial analysis) based on professional background in financial analysis at EY and PwC
+- Designed the hybrid architecture combining classical AI verification with LLM agents
+- Specified the CSP constraint structure, knowledge base rule chains, anomaly thresholds, and multi-agent topology
+- Defined the integration contract between layers (the verification gate that prevents LLM hallucinations)
+- Made all design trade-offs and validated outputs against the AIMA textbook and course materials
+- Reviewed and tested every component before commit
+
+Claude Code was used as a productivity tool to:
+- Translate the student's specifications into syntactically correct Python
+- Generate test scaffolding for components the student designed
+- Format documentation drafts written by the student
+
+The intellectual contribution — the responsible AI framing, the system architecture, the choice of techniques, and the evaluation methodology — is entirely the student's own work.
 
 **All algorithmic design is the student's own work** — the CSP search strategy, AC-3 implementation, forward-chaining inference, anomaly thresholds, multi-agent topology, and the hybrid LLM/classical architecture were specified, debugged, and validated by the student against the AIMA / Kalathur source material. Use of AI tooling is disclosed in line with BU MET academic-integrity policy on responsible AI use.
