@@ -1,135 +1,116 @@
-# 🧮 llm_fin_audit
+# llm_fin_audit
 
 A hybrid classical-AI + LLM system that catches when a language-model financial agent hallucinates numbers, breaks hard constraints, or misreads compliance rules — and corrects it.
-
----
 
 ## 💡 What it does
 
 LLMs are confidently wrong about finance. They invent ratios, miss covenants, and label distressed companies "healthy." That's fine for chat, fatal for audit.
 
-`llm_fin_audit` wraps an LLM agent team with a deterministic classical layer that:
+I built llm_fin_audit to wrap an LLM agent team with a deterministic classical layer that:
 
-- pulls **real** ratios from yfinance,
-- runs a **CSP solver** to flag constraint violations,
-- runs a **forward-chaining knowledge base** to fire compliance rules,
-- runs a **statistical anomaly detector** on quarterly EPS,
+- pulls real ratios from yfinance,
+- runs a CSP solver to flag constraint violations,
+- runs a forward-chaining knowledge base to fire compliance rules,
+- runs a statistical anomaly detector on quarterly EPS,
 
-…and only lets the LLM's verdict reach the user after the classical layer signs off. Three experimental conditions — *classical-only*, *LLM-only*, *hybrid* — are benchmarked side by side so the cost of removing the safety net is measurable, not hand-waved.
-
----
+…and only lets the LLM's verdict reach the user after the classical layer signs off. I benchmark three experimental conditions side by side — classical-only, LLM-only, and hybrid — so the cost of removing the safety net is measurable, not hand-waved.
 
 ## ✨ Features
 
-1. **Financial data loader** (`src/data/loader.py`) — yfinance-backed ratio + EPS extraction with graceful handling of missing line items.
-2. **CSP solver** (`src/classical/csp_solver.py`) — `Variable`, `Constraint`, `FinancialCSP` with AC-3 arc consistency and backtracking + forward checking, written from scratch.
-3. **Forward-chaining knowledge base** (`src/classical/knowledge_base.py`) — Horn-clause `Clause` / `KnowledgeBase` engine with a six-rule compliance ruleset.
-4. **Earnings anomaly detector** (`src/classical/anomaly_detector.py`) — z-score outlier flagging, linear-search worst-quarter lookup, half-vs-half trend classification.
-5. **Agno multi-agent team** (`src/llm/agno_agents.py`) — `DataAgent` / `AnalysisAgent` / `ComplianceAgent` on Ollama llama3.2, each calling into the classical layer through `@tool` wrappers, with hardened ticker injection so the LLM cannot pass placeholder strings.
-6. **Multi-stock comparator** (`src/classical/comparator.py`) — side-by-side comparison, composite-risk ranking, and matplotlib charts.
-7. **Evaluation harness** (`src/evaluation/benchmark.py`) — runs *classical-only*, *LLM-only*, and *hybrid* on the same ticker, captures response times, and flags constraint violations heuristically.
-8. **CLI surfaces** — `run_demo.py` (rich-terminal classical demo), `run_agent.py` (multi-agent demo), `chat.py` (interactive non-coder chatbot).
-9. **Streamlit web app** (`app.py`) — three-tab UI: single-stock **Analysis**, dynamic **Compare** (add/remove up to 6 tickers, metric multiselect, color-coded thresholds, deep-dive per stock), and an LLM **Chat** tab gated behind Ollama.
+- **Financial data loader** (`src/data/loader.py`) — yfinance-backed ratio + EPS extraction with graceful handling of missing line items
+- **CSP solver** (`src/classical/csp_solver.py`) — Variable, Constraint, FinancialCSP with AC-3 arc consistency and backtracking + forward checking, written from scratch
+- **Forward-chaining knowledge base** (`src/classical/knowledge_base.py`) — Horn-clause Clause / KnowledgeBase engine with a six-rule compliance ruleset
+- **Earnings anomaly detector** (`src/classical/anomaly_detector.py`) — z-score outlier flagging, linear-search worst-quarter lookup, half-vs-half trend classification
+- **Agno multi-agent team** (`src/llm/agno_agents.py`) — DataAgent / AnalysisAgent / ComplianceAgent on Ollama llama3.2, each calling into the classical layer through @tool wrappers
+- **Multi-stock comparator** (`src/classical/comparator.py`) — side-by-side comparison, composite-risk ranking, and matplotlib charts
+- **Evaluation harness** (`src/evaluation/benchmark.py`) — runs classical-only, LLM-only, and hybrid on the same ticker, captures response times, and flags constraint violations
+- **CLI surfaces** — `run_demo.py` (rich-terminal classical demo), `run_agent.py` (multi-agent demo), `chat.py` (interactive non-coder chatbot)
+- **Streamlit web app** (`app.py`) — three-tab UI: single-stock Analysis, dynamic Compare (add/remove up to 6 tickers, metric multiselect, color-coded thresholds, deep-dive per stock), and an LLM Chat tab gated behind Ollama
 
-All classical components and tests live under `src/` and `tests/` with `pytest` coverage.
-
----
+All classical components have pytest coverage under `tests/`.
 
 ## 🏗️ Architecture
 
 Two cooperating layers — the LLM proposes, the classical layer verifies and corrects.
 
-```
 ┌─────────────────────── Classical layer (deterministic) ────────────────────────┐
 │  loader (yfinance) ─► CSP solver       ─► PASS / WARNING / FAIL                │
 │                    ─► Knowledge base   ─► triggered compliance rules           │
 │                    ─► Anomaly detector ─► severity + flagged quarters          │
 └────────────────────────────────────────────────────────────────────────────────┘
-                                     ▲
-                                     │  @tool wrappers (return JSON)
-                                     │
+▲
+│  @tool wrappers (return JSON)
+│
 ┌──────────────────────── LLM layer (Agno + Ollama) ──────────────────────────┐
 │  DataAgent  ──┐                                                             │
 │  AnalysisAgent├─► FinancialAnalysisTeam coordinator ─► grounded answer      │
-│  ComplianceAgent┘  (ticker injected per run; no placeholder hallucinations) │
+│  ComplianceAgent┘                                                           │
 └─────────────────────────────────────────────────────────────────────────────┘
-```
 
 The LLM cannot output a final verdict until at least one tool call into the classical layer has returned. Every numeric claim in the response is traceable to a yfinance row.
 
----
-
 ## 🚀 How to run
 
-Clone, install dependencies, then pick your interface.
+Clone, install dependencies, then pick an interface.
 
 ```bash
 conda activate spring_2026
 pip install -r requirements.txt
 ```
 
-The web app and chatbot need Ollama with the `llama3.2` model:
+The web app and chatbot need Ollama running locally with llama3.2 pulled:
 
 ```bash
 ollama serve
 ollama pull llama3.2
 ```
 
-| | Command | Needs Ollama? |
+| Interface | Command | Needs Ollama? |
 |---|---|---|
-| Web app | `streamlit run app.py` | Only for the **Chat** tab |
+| Web app | `streamlit run app.py` | Only for the Chat tab |
 | Terminal chatbot | `python chat.py` | Yes |
-| Classical demo | `python run_demo.py [TICKER]` | No |
+| Classical demo | `python run_demo.py` | No |
 | Agent demo | `python run_agent.py` | Yes |
 | Benchmark | `python -m src.evaluation.benchmark` | Yes |
-| Tests | `pytest` | No (LLM tests skipped) |
-
----
+| Tests | `pytest` | No |
 
 ## 🧰 Tech stack
 
 - **Python 3.11**
 - **Classical AI** — CSP solver, AC-3, forward checking, forward-chaining KB, statistical anomaly detection, all written against the standard library
-- **Data** — `yfinance`, `pandas`, `numpy`
-- **Visualization** — `matplotlib`, `rich`, `streamlit`
-- **LLM** — `agno` multi-agent framework, `ollama` runtime, `llama3.2` model
-- **Testing** — `pytest`
-
----
+- **Data** — yfinance, pandas, numpy
+- **Visualization** — matplotlib, rich, streamlit
+- **LLM** — agno multi-agent framework, ollama runtime, llama3.2 model
+- **Testing** — pytest
 
 ## 🎓 Course
 
-**BU MET CS 664 — Artificial Intelligence**
+BU MET CS 664 — Artificial Intelligence
 Prof. Suresh Kalathur · Spring 2026
-Student: **Lucky Upadhyay** (MS Applied Data Analytics)
+Student: Lucky Upadhyay (MS Applied Data Analytics)
 
 Modules exercised:
-
 - **Search** — linear-scan worst-quarter lookup, statistical anomaly detection
 - **Constraint satisfaction** — AC-3 + backtracking + forward checking on the financial-soundness CSP
 - **Knowledge representation & reasoning** — Horn-clause KB with forward chaining
 - **Agents & multi-agent systems** — Agno team coordinating specialist agents over a shared classical toolset
 - **AIMA hierarchy** — Agent / Environment / Problem patterns mirrored across the classical layer
 
----
+## 🤖 AI Tool Usage
 
-## 🤖 AI Tool Disclosure
+I built this project with Claude Code (Anthropic) as a coding assistant, in line with BU MET academic-integrity policy on responsible AI use.
 
-This project was built using Claude Code (Anthropic) as a coding assistant, in line with BU MET academic-integrity policy on responsible AI use.
-
-The student designed and directed every aspect of this project:
-- Identified the research problem (LLM hallucination in financial analysis) based on professional background in financial analysis at EY and PwC
-- Designed the hybrid architecture combining classical AI verification with LLM agents
+I designed and directed every aspect of the project:
+- Identified the research problem — LLM hallucination in financial analysis — drawing on my background in financial analysis at EY and PwC
+- Designed the hybrid architecture that combines classical AI verification with LLM agents
 - Specified the CSP constraint structure, knowledge base rule chains, anomaly thresholds, and multi-agent topology
-- Defined the integration contract between layers (the verification gate that prevents LLM hallucinations)
-- Made all design trade-offs and validated outputs against the AIMA textbook and course materials
-- Reviewed and tested every component before commit
+- Defined the verification contract between the two layers
+- Made the design trade-offs and validated each component against the AIMA textbook and course materials
+- Reviewed and tested every piece before committing it
 
-Claude Code was used as a productivity tool to:
-- Translate the student's specifications into syntactically correct Python
-- Generate test scaffolding for components the student designed
-- Format documentation drafts written by the student
+Claude Code helped me move faster by:
+- Translating my specifications into Python
+- Generating test scaffolding for the components I designed
+- Drafting documentation that I edited
 
-The intellectual contribution — the responsible AI framing, the system architecture, the choice of techniques, and the evaluation methodology — is entirely the student's own work.
-
-**All algorithmic design is the student's own work** — the CSP search strategy, AC-3 implementation, forward-chaining inference, anomaly thresholds, multi-agent topology, and the hybrid LLM/classical architecture were specified, debugged, and validated by the student against the AIMA / Kalathur source material. Use of AI tooling is disclosed in line with BU MET academic-integrity policy on responsible AI use.
+The architecture, the responsible-AI framing, the choice of techniques, and the evaluation methodology are my own work.
