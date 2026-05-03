@@ -289,6 +289,103 @@ class FinancialCSP:
                     "interest_coverage_ratio < 1.5 -> critical",
                 ))
 
+        # --- P/E ratio --------------------------------------------------
+        # Valuation gauge: a very high trailing P/E suggests the market
+        # is pricing in growth that may not materialize.
+        pe = ratios_dict.get("pe_ratio")
+        if pe is not None:
+            self.add_variable("pe_ratio", list(DEFAULT_DOMAIN))
+            if pe > 100:
+                self.add_constraint(Constraint(
+                    ["pe_ratio"],
+                    lambda a: a["pe_ratio"] == "critical",
+                    "pe_ratio > 100 -> critical (severely overvalued)",
+                ))
+            elif pe > 50:
+                self.add_constraint(Constraint(
+                    ["pe_ratio"],
+                    lambda a: a["pe_ratio"] in ("warning", "critical"),
+                    "pe_ratio > 50 -> warning (overvalued)",
+                ))
+
+        # --- Return on Equity -------------------------------------------
+        # Profitability gauge: how much profit is generated per dollar of
+        # shareholder equity. Negative ROE means the firm is destroying
+        # equity, which is treated as critical.
+        roe = ratios_dict.get("roe")
+        if roe is not None:
+            self.add_variable("roe", list(DEFAULT_DOMAIN))
+            if roe < 0:
+                self.add_constraint(Constraint(
+                    ["roe"],
+                    lambda a: a["roe"] == "critical",
+                    "roe < 0 -> critical (destroying equity)",
+                ))
+            elif roe < 0.05:
+                self.add_constraint(Constraint(
+                    ["roe"],
+                    lambda a: a["roe"] in ("warning", "critical"),
+                    "roe < 0.05 -> warning (low returns)",
+                ))
+
+        # --- Gross margin -----------------------------------------------
+        # Pricing-power gauge: revenue minus cost of goods sold divided by
+        # revenue. Negative margin means the firm sells below cost.
+        gm = ratios_dict.get("gross_margin")
+        if gm is not None:
+            self.add_variable("gross_margin", list(DEFAULT_DOMAIN))
+            if gm < 0:
+                self.add_constraint(Constraint(
+                    ["gross_margin"],
+                    lambda a: a["gross_margin"] == "critical",
+                    "gross_margin < 0 -> critical (selling below cost)",
+                ))
+            elif gm < 0.20:
+                self.add_constraint(Constraint(
+                    ["gross_margin"],
+                    lambda a: a["gross_margin"] in ("warning", "critical"),
+                    "gross_margin < 0.20 -> warning (thin pricing power)",
+                ))
+
+        # --- Net profit margin ------------------------------------------
+        # Bottom-line profitability after every expense. Negative means
+        # the firm posts a net loss.
+        npm = ratios_dict.get("net_profit_margin")
+        if npm is not None:
+            self.add_variable("net_profit_margin", list(DEFAULT_DOMAIN))
+            if npm < 0:
+                self.add_constraint(Constraint(
+                    ["net_profit_margin"],
+                    lambda a: a["net_profit_margin"] == "critical",
+                    "net_profit_margin < 0 -> critical (net loss)",
+                ))
+            elif npm < 0.05:
+                self.add_constraint(Constraint(
+                    ["net_profit_margin"],
+                    lambda a: a["net_profit_margin"] in ("warning", "critical"),
+                    "net_profit_margin < 0.05 -> warning (thin bottom line)",
+                ))
+
+        # --- Quick ratio ------------------------------------------------
+        # Stricter liquidity check than the current ratio: excludes
+        # inventory, so it captures whether the firm could pay short-term
+        # obligations without having to sell stock.
+        qr = ratios_dict.get("quick_ratio")
+        if qr is not None:
+            self.add_variable("quick_ratio", list(DEFAULT_DOMAIN))
+            if qr < 0.5:
+                self.add_constraint(Constraint(
+                    ["quick_ratio"],
+                    lambda a: a["quick_ratio"] == "critical",
+                    "quick_ratio < 0.5 -> critical (severe liquidity gap)",
+                ))
+            elif qr < 1.0:
+                self.add_constraint(Constraint(
+                    ["quick_ratio"],
+                    lambda a: a["quick_ratio"] in ("warning", "critical"),
+                    "quick_ratio < 1.0 -> warning (tight liquidity)",
+                ))
+
         # --- Solve -------------------------------------------------------
         if not self.ac3():
             return "FAIL"

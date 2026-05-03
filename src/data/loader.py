@@ -26,7 +26,8 @@ def _safe_get(series, key):
 def get_financial_ratios(ticker: str) -> dict:
     """
     Fetch the most recent annual balance sheet + income statement for `ticker`
-    and compute three classical solvency / liquidity ratios.
+    and compute classical solvency / liquidity / profitability / valuation
+    ratios.
 
     Returns:
         {
@@ -34,6 +35,11 @@ def get_financial_ratios(ticker: str) -> dict:
           "debt_to_equity": float | None,
           "current_ratio": float | None,
           "interest_coverage_ratio": float | None,
+          "pe_ratio": float | None,
+          "roe": float | None,
+          "gross_margin": float | None,
+          "net_profit_margin": float | None,
+          "quick_ratio": float | None,
         }
     """
     stock = yf.Ticker(ticker)
@@ -78,11 +84,32 @@ def get_financial_ratios(ticker: str) -> dict:
         ebit / interest if ebit is not None and interest not in (None, 0) else None
     )
 
+    # --- Valuation + profitability metrics from yfinance's `info` dict ---
+    # `info` aggregates ratios yfinance has already computed against trailing
+    # data, so we surface them directly rather than re-deriving from the
+    # statements. Wrapped so a slow or failing `info` call doesn't break
+    # the rest of the loader.
+    try:
+        info = stock.info or {}
+    except Exception:
+        info = {}
+
+    pe_ratio = _coerce_float(info.get("trailingPE"))
+    roe = _coerce_float(info.get("returnOnEquity"))
+    gross_margin = _coerce_float(info.get("grossMargins"))
+    net_profit_margin = _coerce_float(info.get("profitMargins"))
+    quick_ratio = _coerce_float(info.get("quickRatio"))
+
     return {
         "ticker": ticker.upper(),
         "debt_to_equity": debt_to_equity,
         "current_ratio": current_ratio,
         "interest_coverage_ratio": interest_coverage_ratio,
+        "pe_ratio": pe_ratio,
+        "roe": roe,
+        "gross_margin": gross_margin,
+        "net_profit_margin": net_profit_margin,
+        "quick_ratio": quick_ratio,
     }
 
 

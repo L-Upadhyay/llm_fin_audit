@@ -121,34 +121,83 @@ def _clean_response(text):
     return "\n".join(cleaned).strip()
 
 
+# Display order + labels for the full ratio set. Margin/ROE values come
+# back from yfinance as decimals (0.46 = 46%), so they get a percent
+# format; the rest are absolute multiples shown to 3 decimals.
+_RATIO_DISPLAY = [
+    ("debt_to_equity", "Debt-to-Equity", "ratio"),
+    ("current_ratio", "Current Ratio", "ratio"),
+    ("interest_coverage_ratio", "Interest Coverage", "ratio"),
+    ("quick_ratio", "Quick Ratio", "ratio"),
+    ("pe_ratio", "P/E Ratio", "ratio"),
+    ("roe", "Return on Equity", "percent"),
+    ("gross_margin", "Gross Margin", "percent"),
+    ("net_profit_margin", "Net Profit Margin", "percent"),
+]
+
+
+def _format_ratio(value, fmt):
+    if value is None:
+        return "n/a"
+    if fmt == "percent":
+        return f"{value * 100:.2f}%"
+    return f"{value:.3f}"
+
+
 def render_ratios_table(ratios):
     rows = [
-        {"Ratio": "Debt-to-Equity", "Value": ratios.get("debt_to_equity")},
-        {"Ratio": "Current Ratio", "Value": ratios.get("current_ratio")},
-        {"Ratio": "Interest Coverage", "Value": ratios.get("interest_coverage_ratio")},
+        {"Ratio": label, "Value": _format_ratio(ratios.get(key), fmt)}
+        for key, label, fmt in _RATIO_DISPLAY
     ]
     df = pd.DataFrame(rows)
-    df["Value"] = df["Value"].apply(lambda v: f"{v:.3f}" if v is not None else "n/a")
     st.dataframe(df, use_container_width=True, hide_index=True)
 
 
 def make_ratio_chart(ratios, ticker):
-    """Single-ticker bar chart of the three ratios."""
-    fig, ax = plt.subplots(figsize=(8, 4))
-    labels = ["Debt-to-Equity", "Current Ratio", "Interest Coverage"]
-    values = [
-        ratios.get("debt_to_equity") or 0,
-        ratios.get("current_ratio") or 0,
-        ratios.get("interest_coverage_ratio") or 0,
+    """
+    Two-panel bar chart: absolute multiples on the left, percentage-style
+    margins/ROE on the right. The two groups have very different scales,
+    so plotting them on a shared y-axis would flatten one of the panels.
+    """
+    multiples = [
+        ("Debt-to-Equity", ratios.get("debt_to_equity")),
+        ("Current Ratio", ratios.get("current_ratio")),
+        ("Interest Coverage", ratios.get("interest_coverage_ratio")),
+        ("Quick Ratio", ratios.get("quick_ratio")),
+        ("P/E Ratio", ratios.get("pe_ratio")),
     ]
-    bars = ax.bar(labels, values, color=["#1f77b4", "#2ca02c", "#9467bd"])
-    for bar, v in zip(bars, values):
-        ax.text(
-            bar.get_x() + bar.get_width() / 2, v, f"{v:.2f}",
-            ha="center", va="bottom", fontsize=9,
-        )
-    ax.set_title(f"{ticker} — Key Ratios")
-    ax.set_ylabel("Value")
+    margins = [
+        ("Return on Equity", ratios.get("roe")),
+        ("Gross Margin", ratios.get("gross_margin")),
+        ("Net Profit Margin", ratios.get("net_profit_margin")),
+    ]
+
+    fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(12, 4.5))
+
+    def _plot(ax, items, color_cycle, title, ylabel, percent):
+        labels = [name for name, _ in items]
+        values = [v if v is not None else 0 for _, v in items]
+        bars = ax.bar(labels, values, color=color_cycle[: len(items)])
+        for bar, (_, raw) in zip(bars, items):
+            text = "n/a" if raw is None else (f"{raw * 100:.1f}%" if percent else f"{raw:.2f}")
+            ax.text(
+                bar.get_x() + bar.get_width() / 2, bar.get_height(),
+                text, ha="center", va="bottom", fontsize=9,
+            )
+        ax.set_title(title)
+        ax.set_ylabel(ylabel)
+        ax.tick_params(axis="x", rotation=20)
+
+    _plot(
+        ax1, multiples,
+        ["#1f77b4", "#2ca02c", "#9467bd", "#17becf", "#bcbd22"],
+        f"{ticker} — Multiples & Liquidity", "Value", percent=False,
+    )
+    _plot(
+        ax2, margins,
+        ["#ff7f0e", "#d62728", "#8c564b"],
+        f"{ticker} — Profitability (%)", "Percent", percent=True,
+    )
     fig.tight_layout()
     return fig
 
@@ -214,6 +263,8 @@ def render_analysis_tab():
 # ---------------------------------------------------------------------- #
 
 # Numeric ratio metadata: thresholds + plain-English explanation per ratio.
+# Thresholds align with the rules in src/classical/csp_solver.py so the bar
+# chart colors match the CSP verdict for the same ratio.
 RATIO_METADATA = {
     "debt_to_equity": {
         "label": "Debt-to-Equity",
@@ -235,6 +286,41 @@ RATIO_METADATA = {
         "ranges_text": "Healthy: above 3.0 • Warning: 1.5–3.0 • Critical: below 1.5",
         "direction": "higher",
         "thresholds": {"healthy_min": 3.0, "warning_min": 1.5},
+    },
+    "quick_ratio": {
+        "label": "Quick Ratio",
+        "explanation": "Stricter liquidity measure that excludes inventory. Higher is better.",
+        "ranges_text": "Healthy: above 1.0 • Warning: 0.5–1.0 • Critical: below 0.5",
+        "direction": "higher",
+        "thresholds": {"healthy_min": 1.0, "warning_min": 0.5},
+    },
+    "pe_ratio": {
+        "label": "P/E Ratio",
+        "explanation": "Price relative to trailing earnings. Very high values suggest overvaluation.",
+        "ranges_text": "Healthy: below 50 • Warning: 50–100 • Critical: above 100",
+        "direction": "lower",
+        "thresholds": {"healthy_max": 50.0, "warning_max": 100.0},
+    },
+    "roe": {
+        "label": "Return on Equity",
+        "explanation": "Profit generated per dollar of shareholder equity. Higher is better.",
+        "ranges_text": "Healthy: above 5% • Warning: 0–5% • Critical: below 0%",
+        "direction": "higher",
+        "thresholds": {"healthy_min": 0.05, "warning_min": 0.0},
+    },
+    "gross_margin": {
+        "label": "Gross Margin",
+        "explanation": "Revenue left after cost of goods sold. Higher means stronger pricing power.",
+        "ranges_text": "Healthy: above 20% • Warning: 0–20% • Critical: below 0%",
+        "direction": "higher",
+        "thresholds": {"healthy_min": 0.20, "warning_min": 0.0},
+    },
+    "net_profit_margin": {
+        "label": "Net Profit Margin",
+        "explanation": "Bottom-line profit per dollar of revenue. Higher is better.",
+        "ranges_text": "Healthy: above 5% • Warning: 0–5% • Critical: below 0%",
+        "direction": "higher",
+        "thresholds": {"healthy_min": 0.05, "warning_min": 0.0},
     },
 }
 
