@@ -72,6 +72,9 @@ def _format_market_cap_short(value):
     return f"${value:,.0f}"
 
 
+_LIVE_BLOCK_HEADER = "**Live market data for"
+
+
 def _format_live_quote_block(quote: dict) -> str:
     """
     Format a get_realtime_price() result as a markdown block.
@@ -89,18 +92,51 @@ def _format_live_quote_block(quote: dict) -> str:
     def vol(v):
         return "n/a" if v is None else f"{int(v):,}"
 
+    def change(c, p):
+        if c is None or p is None:
+            return "n/a"
+        arrow = "▲" if c > 0 else ("▼" if c < 0 else "•")
+        sign = "+" if c > 0 else ""
+        return f"{arrow} {sign}${c:,.2f} ({sign}{p:.2f}%)"
+
+    div_yield = quote.get("dividend_yield")
+    beta = quote.get("beta")
+
     lines = [
-        f"**Live market data for {quote.get('ticker', '?')}:**",
-        f"- Current Price: {price(quote.get('current_price'))}",
-        f"- Today's Open: {price(quote.get('open'))}",
-        f"- Today's High: {price(quote.get('day_high'))}",
-        f"- Today's Low: {price(quote.get('day_low'))}",
-        f"- 52-Week High: {price(quote.get('fifty_two_week_high'))}",
-        f"- 52-Week Low: {price(quote.get('fifty_two_week_low'))}",
+        f"{_LIVE_BLOCK_HEADER} {quote.get('ticker', '?')} — "
+        f"as of {quote.get('timestamp', 'now')}:**",
+        f"- Current Price: {price(quote.get('current_price'))}  "
+        f"{change(quote.get('price_change'), quote.get('price_change_percent'))}",
+        f"- Previous Close: {price(quote.get('previous_close'))}",
+        f"- Today's Range: {price(quote.get('day_low'))} – {price(quote.get('day_high'))}",
+        f"- 52-Week Range: {price(quote.get('fifty_two_week_low'))} – "
+        f"{price(quote.get('fifty_two_week_high'))}",
         f"- Volume: {vol(quote.get('volume'))}",
         f"- Market Cap: {_format_market_cap_short(quote.get('market_cap'))}",
+        f"- Dividend Yield: {'n/a' if div_yield is None else f'{div_yield:.2f}%'}",
+        f"- Beta: {'n/a' if beta is None else f'{beta:.2f}'}",
+        f"- Next Earnings: {quote.get('next_earnings_date') or 'n/a'}",
     ]
     return "\n".join(lines)
+
+
+def strip_live_quote_block(text: str) -> str:
+    """
+    Remove the auto-prepended live-market-data block from a team response.
+
+    UIs that render the live quote in a structured panel call this so the
+    same data isn't shown twice (once in the panel, once as markdown).
+    """
+    if not text:
+        return text
+    lines = text.split("\n")
+    if not lines or not lines[0].lstrip().startswith(_LIVE_BLOCK_HEADER):
+        return text
+    # The block ends at the first blank line after the header.
+    for i in range(1, len(lines)):
+        if lines[i].strip() == "":
+            return "\n".join(lines[i + 1:]).lstrip()
+    return ""
 
 
 MODEL_ID = "llama3.2"
@@ -590,4 +626,5 @@ class FinancialAnalysisTeam:
             "csp_verdict": csp_verdict,
             "recommendation": recommendation,
             "ratios": ratios,
+            "realtime": live_quote,
         }

@@ -108,6 +108,26 @@ def render_severity_box(severity):
         st.info(text)
 
 
+_LIVE_BLOCK_HEADER = "**Live market data for"
+
+
+def strip_live_quote_block(text):
+    """
+    Remove an auto-prepended live-market-data block from agent text. The
+    chat tab renders the live quote in its own panel, so we drop the
+    duplicate markdown copy before showing the LLM's narrative.
+    """
+    if not text:
+        return text
+    lines = text.split("\n")
+    if not lines or not lines[0].lstrip().startswith(_LIVE_BLOCK_HEADER):
+        return text
+    for i in range(1, len(lines)):
+        if lines[i].strip() == "":
+            return "\n".join(lines[i + 1:]).lstrip()
+    return ""
+
+
 def _clean_response(text):
     """
     Strip out raw tool-call JSON that occasionally leaks through Agno's
@@ -158,6 +178,40 @@ def _format_market_cap(value):
     return f"${value:,.0f}"
 
 
+def _format_range(low, high):
+    """Format a low–high price range, or 'n/a' if either side is missing."""
+    if low is None or high is None:
+        return "n/a"
+    return f"${low:,.2f} – ${high:,.2f}"
+
+
+def _format_change(change, change_pct):
+    """
+    Format the daily change as '▲ +$2.40 (+0.86%)' / '▼ -$1.10 (-0.40%)'.
+    Returns ('text', 'color') so the caller can color-code it.
+    """
+    if change is None or change_pct is None:
+        return "n/a", "#666666"
+    if change > 0:
+        return f"▲ +${change:,.2f} (+{change_pct:.2f}%)", "#2ca02c"
+    if change < 0:
+        return f"▼ -${abs(change):,.2f} ({change_pct:.2f}%)", "#d62728"
+    return f"$0.00 (0.00%)", "#666666"
+
+
+def _format_dividend_yield(value):
+    """Render dividend yield as '0.39%' — yfinance already returns percent units."""
+    if value is None:
+        return "n/a"
+    return f"{value:.2f}%"
+
+
+def _format_beta(value):
+    if value is None:
+        return "n/a"
+    return f"{value:.2f}"
+
+
 def render_live_market_data(realtime):
     """
     Render the live yfinance quote as a clean grid with a green LIVE badge.
@@ -168,8 +222,7 @@ def render_live_market_data(realtime):
 
     error = realtime.get("error")
 
-    # Header with green LIVE badge — uses HTML so the pill style is consistent
-    # across themes.
+    # Header with green LIVE badge.
     st.markdown(
         "<div style='display:flex; align-items:center; gap:10px;'>"
         "<h3 style='margin:0;'>Live Market Data</h3>"
@@ -179,25 +232,44 @@ def render_live_market_data(realtime):
         "</div>",
         unsafe_allow_html=True,
     )
-    st.caption("Pulled live from yfinance — refreshes each time you click Analyze.")
+
+    timestamp = realtime.get("timestamp")
+    if timestamp:
+        st.caption(f"As of {timestamp}")
+    else:
+        st.caption("Pulled live from yfinance.")
 
     if error:
         st.warning(f"Couldn't fetch live data: {error}")
         return
 
-    fields_top = [
-        ("Current Price", _format_price(realtime.get("current_price"))),
-        ("Today's Open", _format_price(realtime.get("open"))),
-        ("Today's High", _format_price(realtime.get("day_high"))),
-        ("Today's Low", _format_price(realtime.get("day_low"))),
-    ]
-    fields_bottom = [
-        ("52-Week High", _format_price(realtime.get("fifty_two_week_high"))),
-        ("52-Week Low", _format_price(realtime.get("fifty_two_week_low"))),
+    # --- Headline price + delta ---------------------------------------
+    price_text = _format_price(realtime.get("current_price"))
+    change_text, change_color = _format_change(
+        realtime.get("price_change"),
+        realtime.get("price_change_percent"),
+    )
+    st.markdown(
+        f"<div style='font-size:2em; font-weight:600;'>{price_text} "
+        f"<span style='font-size:0.55em; color:{change_color}; "
+        f"font-weight:600;'>{change_text}</span></div>",
+        unsafe_allow_html=True,
+    )
+
+    # --- Two rows of metrics ------------------------------------------
+    row1 = [
+        ("Previous Close", _format_price(realtime.get("previous_close"))),
+        ("Today's Range", _format_range(realtime.get("day_low"), realtime.get("day_high"))),
+        ("52-Week Range", _format_range(realtime.get("fifty_two_week_low"), realtime.get("fifty_two_week_high"))),
         ("Volume", _format_volume(realtime.get("volume"))),
-        ("Market Cap", _format_market_cap(realtime.get("market_cap"))),
     ]
-    for row in (fields_top, fields_bottom):
+    row2 = [
+        ("Market Cap", _format_market_cap(realtime.get("market_cap"))),
+        ("Dividend Yield", _format_dividend_yield(realtime.get("dividend_yield"))),
+        ("Beta", _format_beta(realtime.get("beta"))),
+        ("Next Earnings", realtime.get("next_earnings_date") or "n/a"),
+    ]
+    for row in (row1, row2):
         cols = st.columns(len(row))
         for col, (label, value) in zip(cols, row):
             with col:
@@ -797,8 +869,11 @@ def render_chat_tab():
     # Existing history
     for msg in st.session_state.chat_messages:
         with st.chat_message(msg["role"]):
-            if msg["role"] == "assistant" and msg.get("recommendation"):
-                _render_recommendation_banner(msg["recommendation"])
+            if msg["role"] == "assistant":
+                if msg.get("realtime"):
+                    render_live_market_data(msg["realtime"])
+                if msg.get("recommendation"):
+                    _render_recommendation_banner(msg["recommendation"])
             st.markdown(msg["content"])
 
     user_input = st.chat_input("Ask anything about this stock...")
@@ -834,16 +909,26 @@ def render_chat_tab():
     # Run the team
     with st.chat_message("assistant"):
         recommendation = None
+        realtime = None
         with st.spinner(f"Thinking about {ticker}... (this may take a minute)"):
             try:
                 result = st.session_state.team.run(ticker, user_input)
                 response = _clean_response(result.get("text", ""))
                 recommendation = result.get("recommendation")
+                realtime = result.get("realtime")
+                # Avoid double-rendering: the panel below shows the same
+                # numbers the agent prepended in markdown form.
+                if realtime:
+                    response = strip_live_quote_block(response)
             except Exception as e:
                 response = (
                     f"The agent team hit a problem: {e}\n\n"
                     "Make sure Ollama is running."
                 )
+
+        # Live market data panel (only present for price questions).
+        if realtime:
+            render_live_market_data(realtime)
 
         # CSP-driven recommendation banner — rendered above the LLM answer.
         if recommendation:
@@ -851,12 +936,13 @@ def render_chat_tab():
 
         st.markdown(response)
 
-    # Persist both the banner state and the response so reruns redraw cleanly.
+    # Persist banner / panel / text so reruns redraw cleanly.
     st.session_state.chat_messages.append(
         {
             "role": "assistant",
             "content": response,
             "recommendation": recommendation,
+            "realtime": realtime,
         }
     )
 

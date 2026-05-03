@@ -22,11 +22,12 @@ Usage:
 
 import sys
 
-from rich.console import Console
+from rich.console import Console, Group
 from rich.markdown import Markdown
 from rich.panel import Panel
 from rich.prompt import Prompt
 from rich.table import Table
+from rich.text import Text
 
 from src.classical.anomaly_detector import detect_earnings_anomaly
 from src.classical.csp_solver import FinancialCSP
@@ -59,6 +60,25 @@ SEVERITY_STYLE = {"none": "green", "moderate": "yellow", "severe": "red"}
 def fmt(value):
     """Format a numeric ratio for display, or 'n/a' if missing."""
     return "n/a" if value is None else f"{value:.3f}"
+
+
+_LIVE_BLOCK_HEADER = "**Live market data for"
+
+
+def strip_live_quote_block(text):
+    """
+    Remove an auto-prepended live-market-data block from agent text so
+    the rich Panel rendering doesn't duplicate the markdown copy.
+    """
+    if not text:
+        return text
+    lines = text.split("\n")
+    if not lines or not lines[0].lstrip().startswith(_LIVE_BLOCK_HEADER):
+        return text
+    for i in range(1, len(lines)):
+        if lines[i].strip() == "":
+            return "\n".join(lines[i + 1:]).lstrip()
+    return ""
 
 
 def _clean_response(text):
@@ -139,6 +159,81 @@ def show_summary(console, ticker, ratios, earnings):
 _REC_BORDER = {"green": "green", "yellow": "yellow", "red": "red"}
 
 
+def _fmt_price(v):
+    return "n/a" if v is None else f"${v:,.2f}"
+
+
+def _fmt_volume(v):
+    return "n/a" if v is None else f"{int(v):,}"
+
+
+def _fmt_market_cap(v):
+    if v is None:
+        return "n/a"
+    a = abs(v)
+    if a >= 1e12:
+        return f"${v / 1e12:.2f}T"
+    if a >= 1e9:
+        return f"${v / 1e9:.2f}B"
+    if a >= 1e6:
+        return f"${v / 1e6:.2f}M"
+    return f"${v:,.0f}"
+
+
+def _fmt_change(c, p):
+    """Return (text, rich_color) for the daily price change."""
+    if c is None or p is None:
+        return "n/a", "white"
+    if c > 0:
+        return f"▲ +${c:,.2f} (+{p:.2f}%)", "green"
+    if c < 0:
+        return f"▼ -${abs(c):,.2f} ({p:.2f}%)", "red"
+    return "$0.00 (0.00%)", "white"
+
+
+def show_live_market_data(console, realtime):
+    """Render the live yfinance quote as a rich Panel + Table."""
+    if not realtime or realtime.get("error"):
+        return
+
+    change_text, change_color = _fmt_change(
+        realtime.get("price_change"),
+        realtime.get("price_change_percent"),
+    )
+
+    headline = Text()
+    headline.append(_fmt_price(realtime.get("current_price")), style="bold white")
+    headline.append("   ")
+    headline.append(change_text, style=f"bold {change_color}")
+
+    div = realtime.get("dividend_yield")
+    beta = realtime.get("beta")
+
+    table = Table(show_header=False, box=None, pad_edge=False)
+    table.add_column("Metric", style="dim")
+    table.add_column("Value")
+    table.add_row("Previous Close", _fmt_price(realtime.get("previous_close")))
+    low, high = realtime.get("day_low"), realtime.get("day_high")
+    table.add_row("Today's Range", f"{_fmt_price(low)} – {_fmt_price(high)}")
+    yl, yh = realtime.get("fifty_two_week_low"), realtime.get("fifty_two_week_high")
+    table.add_row("52-Week Range", f"{_fmt_price(yl)} – {_fmt_price(yh)}")
+    table.add_row("Volume", _fmt_volume(realtime.get("volume")))
+    table.add_row("Market Cap", _fmt_market_cap(realtime.get("market_cap")))
+    table.add_row("Dividend Yield", "n/a" if div is None else f"{div:.2f}%")
+    table.add_row("Beta", "n/a" if beta is None else f"{beta:.2f}")
+    table.add_row("Next Earnings", realtime.get("next_earnings_date") or "n/a")
+
+    title = (
+        f"[bold]Live market data — {realtime.get('ticker', '?')}[/] "
+        f"[dim]as of {realtime.get('timestamp', 'now')}[/]"
+    )
+    console.print(Panel(
+        Group(headline, Text(""), table),
+        title=title,
+        border_style="green",
+    ))
+
+
 def show_recommendation(console, ticker, recommendation):
     """Render the CSP-driven recommendation banner above the answer."""
     if not recommendation:
@@ -161,12 +256,18 @@ def show_recommendation(console, ticker, recommendation):
 def show_response(console, ticker, result):
     """
     Render a chat response. `result` is the dict returned by
-    FinancialAnalysisTeam.run — we render the colored CSP-driven
-    recommendation first, then the LLM's narrative answer.
+    FinancialAnalysisTeam.run — we render the live-market-data panel
+    (if any), the CSP-driven recommendation banner, then the LLM's
+    narrative answer.
     """
     if isinstance(result, dict):
+        realtime = result.get("realtime")
+        if realtime:
+            show_live_market_data(console, realtime)
         show_recommendation(console, ticker, result.get("recommendation"))
         text = result.get("text", "")
+        if realtime:
+            text = strip_live_quote_block(text)
     else:
         text = result
 
