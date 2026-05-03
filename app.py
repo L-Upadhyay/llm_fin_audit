@@ -21,7 +21,11 @@ from src.classical.anomaly_detector import detect_earnings_anomaly
 from src.classical.comparator import compare_stocks, rank_stocks
 from src.classical.csp_solver import FinancialCSP
 from src.classical.knowledge_base import run_compliance_check
-from src.data.loader import get_earnings_history, get_financial_ratios
+from src.data.loader import (
+    get_earnings_history,
+    get_financial_ratios,
+    get_realtime_price,
+)
 
 
 # Verdict / severity styling for table cells. Streamlit's status helpers
@@ -60,6 +64,10 @@ def run_analysis(ticker):
     eps_values = list(earnings.get("quarterly_eps", {}).values())
     anomaly = detect_earnings_anomaly(eps_values) if eps_values else None
 
+    # Live yfinance quote — pulled here so a single Analyze click refreshes
+    # the realtime panel along with the rest of the classical layer.
+    realtime = get_realtime_price(ticker)
+
     return {
         "ticker": ticker.upper(),
         "ratios": ratios,
@@ -67,6 +75,7 @@ def run_analysis(ticker):
         "kb": kb,
         "anomaly": anomaly,
         "earnings": earnings,
+        "realtime": realtime,
     }
 
 
@@ -119,6 +128,80 @@ def _clean_response(text):
             continue
         cleaned.append(line)
     return "\n".join(cleaned).strip()
+
+
+def _format_price(value):
+    """Render a USD price as $1,234.56, or 'n/a' if missing."""
+    if value is None:
+        return "n/a"
+    return f"${value:,.2f}"
+
+
+def _format_volume(value):
+    """Render share volume with thousands separators."""
+    if value is None:
+        return "n/a"
+    return f"{int(value):,}"
+
+
+def _format_market_cap(value):
+    """Render market cap as $X.XXT / $X.XXB / $X.XXM, scaled automatically."""
+    if value is None:
+        return "n/a"
+    abs_v = abs(value)
+    if abs_v >= 1e12:
+        return f"${value / 1e12:.2f}T"
+    if abs_v >= 1e9:
+        return f"${value / 1e9:.2f}B"
+    if abs_v >= 1e6:
+        return f"${value / 1e6:.2f}M"
+    return f"${value:,.0f}"
+
+
+def render_live_market_data(realtime):
+    """
+    Render the live yfinance quote as a clean grid with a green LIVE badge.
+    Hidden if `realtime` is empty or yfinance returned an error.
+    """
+    if not realtime:
+        return
+
+    error = realtime.get("error")
+
+    # Header with green LIVE badge — uses HTML so the pill style is consistent
+    # across themes.
+    st.markdown(
+        "<div style='display:flex; align-items:center; gap:10px;'>"
+        "<h3 style='margin:0;'>Live Market Data</h3>"
+        "<span style='background-color:#2ca02c; color:white; "
+        "padding:2px 8px; border-radius:10px; font-size:0.75em; "
+        "font-weight:bold;'>LIVE</span>"
+        "</div>",
+        unsafe_allow_html=True,
+    )
+    st.caption("Pulled live from yfinance — refreshes each time you click Analyze.")
+
+    if error:
+        st.warning(f"Couldn't fetch live data: {error}")
+        return
+
+    fields_top = [
+        ("Current Price", _format_price(realtime.get("current_price"))),
+        ("Today's Open", _format_price(realtime.get("open"))),
+        ("Today's High", _format_price(realtime.get("day_high"))),
+        ("Today's Low", _format_price(realtime.get("day_low"))),
+    ]
+    fields_bottom = [
+        ("52-Week High", _format_price(realtime.get("fifty_two_week_high"))),
+        ("52-Week Low", _format_price(realtime.get("fifty_two_week_low"))),
+        ("Volume", _format_volume(realtime.get("volume"))),
+        ("Market Cap", _format_market_cap(realtime.get("market_cap"))),
+    ]
+    for row in (fields_top, fields_bottom):
+        cols = st.columns(len(row))
+        for col, (label, value) in zip(cols, row):
+            with col:
+                st.metric(label=label, value=value)
 
 
 def _render_recommendation_banner(recommendation):
@@ -251,6 +334,9 @@ def render_analysis_tab():
 
     st.markdown("### Financial Ratios")
     render_ratios_table(a["ratios"])
+
+    # Live market data panel — sits between the ratio table and the chart.
+    render_live_market_data(a.get("realtime"))
 
     st.pyplot(make_ratio_chart(a["ratios"], a["ticker"]))
 

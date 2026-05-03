@@ -295,7 +295,11 @@ class FinancialAnalysisTeam:
     # directive is appended at runtime by _set_ticker.
     BASE_DATA_INSTRUCTIONS = [
         "You fetch real financial data using your tools — never invent numbers.",
-        "Call get_financial_ratios_tool exactly once with the bound ticker.",
+        "Call get_financial_ratios_tool with the bound ticker for ratio questions.",
+        "Call get_realtime_price_tool with the bound ticker for any question about "
+        "current price, today's open/high/low, volume, 52-week high or low, or "
+        "market cap. Quote those numbers verbatim — never use figures from your "
+        "training data.",
         "Report the raw numbers clearly with no editorializing.",
     ]
     BASE_ANALYSIS_INSTRUCTIONS = [
@@ -313,6 +317,9 @@ class FinancialAnalysisTeam:
     BASE_TEAM_INSTRUCTIONS = [
         "You lead a financial-analysis team backed by classical AI tools.",
         "Delegate ratio lookups to DataAgent.",
+        "Delegate any question about current price, today's open/high/low, "
+        "volume, 52-week high/low, or market cap to DataAgent so it can call "
+        "get_realtime_price_tool — never answer with prices from memory.",
         "Delegate constraint and anomaly checks to AnalysisAgent.",
         "Delegate compliance/risk checks to ComplianceAgent.",
         "Synthesize their outputs into a single grounded verdict.",
