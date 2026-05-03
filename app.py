@@ -109,6 +109,7 @@ def render_severity_box(severity):
 
 
 _LIVE_BLOCK_HEADER = "**Live market data for"
+_COMPARISON_HEADER = "**Comparing"
 
 
 def strip_live_quote_block(text):
@@ -124,6 +125,26 @@ def strip_live_quote_block(text):
         return text
     for i in range(1, len(lines)):
         if lines[i].strip() == "":
+            return "\n".join(lines[i + 1:]).lstrip()
+    return ""
+
+
+def strip_comparison_block(text):
+    """
+    Remove an auto-prepended comparison table from agent text. The chat
+    tab renders the comparison in its own panel, so we drop the duplicate
+    markdown copy.
+    """
+    if not text:
+        return text
+    lines = text.split("\n")
+    if not lines or not lines[0].lstrip().startswith(_COMPARISON_HEADER):
+        return text
+    seen_table = False
+    for i in range(1, len(lines)):
+        if lines[i].lstrip().startswith("|"):
+            seen_table = True
+        elif seen_table and lines[i].strip() == "":
             return "\n".join(lines[i + 1:]).lstrip()
     return ""
 
@@ -274,6 +295,33 @@ def render_live_market_data(realtime):
         for col, (label, value) in zip(cols, row):
             with col:
                 st.metric(label=label, value=value)
+
+
+def _render_comparison_panels(comparison):
+    """
+    Render two Live Market Data panels side by side.
+
+    `comparison` is the list of per-ticker dicts returned by the team —
+    each entry has 'ticker', 'realtime', 'csp_verdict', 'recommendation'.
+    """
+    if not comparison or len(comparison) < 2:
+        return
+    cols = st.columns(len(comparison))
+    for col, block in zip(cols, comparison):
+        with col:
+            realtime = block.get("realtime") or {"ticker": block["ticker"]}
+            render_live_market_data(realtime)
+
+
+def _render_comparison_recommendations(comparison):
+    """Render one recommendation banner per ticker, side by side."""
+    if not comparison:
+        return
+    cols = st.columns(len(comparison))
+    for col, block in zip(cols, comparison):
+        with col:
+            st.caption(f"**{block['ticker']}**")
+            _render_recommendation_banner(block.get("recommendation"))
 
 
 def _render_recommendation_banner(recommendation):
@@ -870,10 +918,14 @@ def render_chat_tab():
     for msg in st.session_state.chat_messages:
         with st.chat_message(msg["role"]):
             if msg["role"] == "assistant":
-                if msg.get("realtime"):
-                    render_live_market_data(msg["realtime"])
-                if msg.get("recommendation"):
-                    _render_recommendation_banner(msg["recommendation"])
+                if msg.get("comparison"):
+                    _render_comparison_panels(msg["comparison"])
+                    _render_comparison_recommendations(msg["comparison"])
+                else:
+                    if msg.get("realtime"):
+                        render_live_market_data(msg["realtime"])
+                    if msg.get("recommendation"):
+                        _render_recommendation_banner(msg["recommendation"])
             st.markdown(msg["content"])
 
     user_input = st.chat_input("Ask anything about this stock...")
@@ -910,15 +962,19 @@ def render_chat_tab():
     with st.chat_message("assistant"):
         recommendation = None
         realtime = None
+        comparison = None
         with st.spinner(f"Thinking about {ticker}... (this may take a minute)"):
             try:
                 result = st.session_state.team.run(ticker, user_input)
                 response = _clean_response(result.get("text", ""))
                 recommendation = result.get("recommendation")
                 realtime = result.get("realtime")
-                # Avoid double-rendering: the panel below shows the same
+                comparison = result.get("comparison")
+                # Avoid double-rendering: the panels below show the same
                 # numbers the agent prepended in markdown form.
-                if realtime:
+                if comparison:
+                    response = strip_comparison_block(response)
+                elif realtime:
                     response = strip_live_quote_block(response)
             except Exception as e:
                 response = (
@@ -926,12 +982,16 @@ def render_chat_tab():
                     "Make sure Ollama is running."
                 )
 
-        # Live market data panel (only present for price questions).
-        if realtime:
+        # Comparison mode — two Live Market Data panels side by side.
+        if comparison:
+            _render_comparison_panels(comparison)
+        elif realtime:
             render_live_market_data(realtime)
 
         # CSP-driven recommendation banner — rendered above the LLM answer.
-        if recommendation:
+        if comparison:
+            _render_comparison_recommendations(comparison)
+        elif recommendation:
             _render_recommendation_banner(recommendation)
 
         st.markdown(response)
@@ -943,6 +1003,7 @@ def render_chat_tab():
             "content": response,
             "recommendation": recommendation,
             "realtime": realtime,
+            "comparison": comparison,
         }
     )
 

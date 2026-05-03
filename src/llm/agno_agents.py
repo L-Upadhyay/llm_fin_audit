@@ -20,6 +20,7 @@ fall back to a placeholder string when calling tools.
 """
 
 import json
+import re
 
 from agno.agent import Agent
 from agno.models.ollama import Ollama
@@ -56,6 +57,178 @@ def _is_price_question(question: str) -> bool:
         return False
     low = question.lower()
     return any(kw in low for kw in _PRICE_KEYWORDS)
+
+
+# Common 2-5-letter uppercase words that look like tickers but aren't.
+# Used by the comparison-mode detector to filter out conjunctions, pronouns,
+# acronyms, and finance jargon before picking the second ticker.
+_TICKER_STOPWORDS = {
+    # English connectives, prepositions, pronouns, adverbs
+    "OR", "AND", "VS", "FOR", "TO", "AT", "IN", "ON", "OF", "BY", "AS",
+    "IF", "IS", "IT", "BE", "DO", "GO", "AM", "AN", "WE", "US", "MY",
+    "ME", "HE", "SO", "NO", "OK", "THE", "ABOUT", "AROUND", "AGAIN",
+    "ALSO", "EVEN", "ELSE", "OVER", "UNDER", "AFTER", "BEFORE", "FROM",
+    "INTO", "ONTO", "WITH", "WITHIN", "ALONG", "ACROSS", "JUST", "ONLY",
+    "VERY", "MUCH", "EVERY", "OTHER", "SAME", "THAN", "THEN", "HERE",
+    "THERE", "NOW", "TODAY", "WEEK", "MONTH", "YEAR", "STOCK", "SHARE",
+    "PRICE", "VALUE", "WORTH", "RATIO",
+    # Question words
+    "WHAT", "HOW", "WHY", "WHO", "WHEN", "WHERE", "WHICH",
+    # Comparison / trading verbs
+    "BUY", "SELL", "HOLD", "OWN", "ADD", "DROP", "GAIN", "LOSS",
+    "BETTER", "WORSE", "BEST", "WORST", "MORE", "LESS", "GOOD",
+    # Common finance acronyms / unit labels
+    "USD", "EUR", "GBP", "JPY", "LLC", "INC", "LTD", "CEO", "CFO", "CTO",
+    "API", "ETF", "IPO", "USA", "ESG", "AI", "ML", "NLP", "PE", "EPS",
+    "ROE", "ROI", "ROA", "EBIT", "FY", "YOY", "QOQ", "MOM", "DOD",
+    # Auxiliary / modal verbs
+    "ARE", "WAS", "HAS", "HAD", "HAVE", "WERE", "BEEN", "WILL", "WOULD",
+    "COULD", "SHALL", "MIGHT", "MAY", "CAN", "SAY", "SAID",
+    # Affirmation / negation
+    "YES", "NOT", "ANY", "ALL", "SOME", "EACH", "BOTH",
+}
+
+
+_TICKER_RE = re.compile(r"\b[A-Z]{2,5}\b")
+
+# Comparison signal — only one of these in the question puts us in compare
+# mode. This prevents "Tell me about AAPL" from being misread as a
+# comparison just because "TELL" or "ABOUT" matches the ticker regex.
+_COMPARISON_SIGNALS = re.compile(
+    r"\b(vs|versus|compare[d]?|compared\s+to|compared\s+with|"
+    r"between|which\s+is|or|and)\b",
+    re.IGNORECASE,
+)
+
+
+def _detect_second_ticker(question: str, primary: str):
+    """
+    Scan the question for a second ticker symbol distinct from `primary`.
+
+    Two-step detection: first the question must contain an explicit
+    comparison signal ('vs', 'or', 'and', 'compare', 'between', etc.).
+    Only then do we scan for an uppercase 2-5-letter token that isn't the
+    primary ticker and isn't a known English/finance stopword. Returns
+    None if either step fails.
+    """
+    if not question:
+        return None
+    if not _COMPARISON_SIGNALS.search(question):
+        return None
+    primary = (primary or "").upper()
+    upper = question.upper()
+    for match in _TICKER_RE.findall(upper):
+        if match == primary:
+            continue
+        if match in _TICKER_STOPWORDS:
+            continue
+        return match
+    return None
+
+
+_COMPARISON_HEADER = "**Comparing"
+
+
+def _build_per_ticker_block(ticker: str) -> dict:
+    """Fetch ratios + realtime + CSP verdict + recommendation for one ticker."""
+    ticker = ticker.upper()
+    ratios = get_financial_ratios(ticker)
+    realtime = get_realtime_price(ticker)
+    csp_verdict = FinancialCSP().solve(ratios)
+    recommendation = recommendation_for_verdict(csp_verdict)
+    return {
+        "ticker": ticker,
+        "ratios": ratios,
+        "realtime": realtime,
+        "csp_verdict": csp_verdict,
+        "recommendation": recommendation,
+    }
+
+
+def _format_comparison_block(comparison: list) -> str:
+    """
+    Render a markdown side-by-side table comparing two tickers.
+
+    Used as the auto-prepended block in compare-mode chat answers, so the
+    user always sees a structured comparison even if the LLM rambles.
+    """
+    if not comparison or len(comparison) < 2:
+        return ""
+
+    a, b = comparison[0], comparison[1]
+    ta, tb = a["ticker"], b["ticker"]
+    ra, rb = a["ratios"], b["ratios"]
+    rta, rtb = a["realtime"], b["realtime"]
+
+    def price(v):
+        return "n/a" if v is None else f"${v:,.2f}"
+
+    def ratio(v):
+        return "n/a" if v is None else f"{v:.3f}"
+
+    def pct(v):
+        return "n/a" if v is None else f"{v * 100:.2f}%"
+
+    def mc(v):
+        if v is None:
+            return "n/a"
+        a_ = abs(v)
+        if a_ >= 1e12:
+            return f"${v / 1e12:.2f}T"
+        if a_ >= 1e9:
+            return f"${v / 1e9:.2f}B"
+        if a_ >= 1e6:
+            return f"${v / 1e6:.2f}M"
+        return f"${v:,.0f}"
+
+    rows = [
+        ("Current Price", price(rta.get("current_price")), price(rtb.get("current_price"))),
+        ("52-Week Range",
+         f"{price(rta.get('fifty_two_week_low'))} – {price(rta.get('fifty_two_week_high'))}",
+         f"{price(rtb.get('fifty_two_week_low'))} – {price(rtb.get('fifty_two_week_high'))}"),
+        ("Market Cap", mc(rta.get("market_cap")), mc(rtb.get("market_cap"))),
+        ("Debt-to-Equity", ratio(ra.get("debt_to_equity")), ratio(rb.get("debt_to_equity"))),
+        ("Current Ratio", ratio(ra.get("current_ratio")), ratio(rb.get("current_ratio"))),
+        ("P/E", ratio(ra.get("pe_ratio")), ratio(rb.get("pe_ratio"))),
+        ("ROE", pct(ra.get("roe")), pct(rb.get("roe"))),
+        ("Net Profit Margin", pct(ra.get("net_profit_margin")), pct(rb.get("net_profit_margin"))),
+        ("**CSP Verdict**", f"**{a['csp_verdict']}**", f"**{b['csp_verdict']}**"),
+        ("**Recommendation**",
+         f"{a['recommendation']['emoji']} {a['recommendation']['label']}",
+         f"{b['recommendation']['emoji']} {b['recommendation']['label']}"),
+    ]
+
+    lines = [
+        f"{_COMPARISON_HEADER} {ta} vs {tb}:**",
+        "",
+        f"| Metric | {ta} | {tb} |",
+        "|---|---|---|",
+    ]
+    for label, va, vb in rows:
+        lines.append(f"| {label} | {va} | {vb} |")
+    return "\n".join(lines)
+
+
+def strip_comparison_block(text: str) -> str:
+    """
+    Drop the auto-prepended comparison table from the agent text. Used by
+    UIs that render the comparison panel separately so the markdown copy
+    isn't shown twice.
+    """
+    if not text:
+        return text
+    lines = text.split("\n")
+    if not lines or not lines[0].lstrip().startswith(_COMPARISON_HEADER):
+        return text
+    # The block ends at the first blank line AFTER the table (i.e., we need
+    # to skip the blank line that's intentional inside the block first).
+    seen_table = False
+    for i in range(1, len(lines)):
+        if lines[i].lstrip().startswith("|"):
+            seen_table = True
+        elif seen_table and lines[i].strip() == "":
+            return "\n".join(lines[i + 1:]).lstrip()
+    return ""
 
 
 def _format_market_cap_short(value):
@@ -556,21 +729,40 @@ class FinancialAnalysisTeam:
         Bind `ticker` into every agent's instructions, run the classical CSP
         for the official recommendation, and then run the team.
 
+        If the question mentions a second ticker (e.g. "AAPL vs NVDA"),
+        the team enters comparison mode: ratios + realtime + CSP verdict
+        are fetched for both tickers, injected into the prompt, and a
+        side-by-side markdown table is auto-prepended to the answer.
+
         Returns:
             {
-              "text": str,                  # the LLM team's natural-language reply
-              "csp_verdict": str,           # PASS / WARNING / FAIL
-              "recommendation": dict,       # {label, emoji, summary, color}
-              "ratios": dict,               # the ratios CSP ran against
+              "text": str,                # synthesized natural-language reply
+              "csp_verdict": str,         # PASS / WARNING / FAIL  (primary)
+              "recommendation": dict,     # {label, emoji, summary, color} (primary)
+              "ratios": dict,             # ratios for the primary ticker
+              "realtime": dict | None,    # primary live quote, single-ticker mode
+              "comparison": list | None,  # [primary_block, second_block] in compare mode
             }
         """
         ticker = ticker.upper()
         self._set_ticker(ticker)
 
-        # Classical layer is the single source of truth for the recommendation.
-        ratios = get_financial_ratios(ticker)
-        csp_verdict = FinancialCSP().solve(ratios)
-        recommendation = recommendation_for_verdict(csp_verdict)
+        # ---- Comparison mode detection -------------------------------
+        second_ticker = _detect_second_ticker(question, ticker)
+        comparison = None
+        if second_ticker:
+            primary_block = _build_per_ticker_block(ticker)
+            second_block = _build_per_ticker_block(second_ticker)
+            comparison = [primary_block, second_block]
+            ratios = primary_block["ratios"]
+            csp_verdict = primary_block["csp_verdict"]
+            recommendation = primary_block["recommendation"]
+        else:
+            # Classical layer is the single source of truth for the recommendation.
+            ratios = get_financial_ratios(ticker)
+            csp_verdict = FinancialCSP().solve(ratios)
+            recommendation = recommendation_for_verdict(csp_verdict)
+
         rec_line = _recommendation_line(recommendation)
 
         prompt_parts = [
@@ -584,13 +776,43 @@ class FinancialAnalysisTeam:
             f"The exact line to copy verbatim is: {rec_line}",
         ]
 
-        # If the question is about live market data, pre-fetch the quote and
-        # inject it as authoritative ground truth. The DataAgent is also
-        # instructed to call get_realtime_price_tool, but smaller LLMs
-        # sometimes skip the tool call — having the JSON in the prompt means
-        # the answer is grounded either way.
+        # ---- Comparison data injection -------------------------------
+        if comparison:
+            prompt_parts.extend([
+                "",
+                f"COMPARISON MODE — two tickers detected: {ticker} and "
+                f"{second_ticker}. Address BOTH tickers in your answer. "
+                "Provide a side-by-side comparison covering ratios, CSP "
+                "verdict, and a recommendation for each.",
+                "",
+                "Authoritative data for both tickers (quote these numbers "
+                "verbatim; never substitute training-data figures):",
+                json.dumps(
+                    {b["ticker"]: {
+                        "ratios": b["ratios"],
+                        "realtime": b["realtime"],
+                        "csp_verdict": b["csp_verdict"],
+                        "recommendation_line": _recommendation_line(b["recommendation"]),
+                    } for b in comparison},
+                    indent=2,
+                    default=str,
+                ),
+                "",
+                "End your answer with a single '## Recommendation' section "
+                "containing TWO lines — one per ticker, copied verbatim "
+                "from the recommendation_line value above:",
+                *[
+                    f"  - {b['ticker']}: "
+                    f"{_recommendation_line(b['recommendation'])}"
+                    for b in comparison
+                ],
+            ])
+
+        # ---- Live-quote injection (single-ticker price questions) ----
+        # Skip in compare mode; the comparison block already includes both
+        # tickers' realtime data.
         live_quote = None
-        if _is_price_question(question):
+        if _is_price_question(question) and not comparison:
             live_quote = get_realtime_price(ticker)
             prompt_parts.extend([
                 "",
@@ -608,18 +830,31 @@ class FinancialAnalysisTeam:
         response = self.team.run(prompt)
         text = response.content or ""
 
-        # For price questions, prepend a deterministic live-quote block so
-        # the user always sees correct numbers — independent of whether the
-        # LLM actually invoked the realtime tool.
+        # ---- Auto-prepend live-quote block (single-ticker mode) ------
         if live_quote is not None:
             quote_block = _format_live_quote_block(live_quote)
             if quote_block:
                 text = f"{quote_block}\n\n{text.lstrip()}"
 
-        # Belt-and-suspenders: if the LLM forgot the section, append it. The
-        # banner is rendered separately upstream, so the user never misses it.
+        # ---- Auto-prepend comparison table (compare mode) ------------
+        if comparison:
+            comp_block = _format_comparison_block(comparison)
+            if comp_block:
+                text = f"{comp_block}\n\n{text.lstrip()}"
+
+        # ---- Auto-append Recommendation section if missing -----------
         if "## Recommendation" not in text:
-            text = f"{text.rstrip()}\n\n## Recommendation\n{rec_line}"
+            if comparison:
+                rec_lines = [
+                    f"- **{b['ticker']}**: {_recommendation_line(b['recommendation'])}"
+                    for b in comparison
+                ]
+                text = (
+                    f"{text.rstrip()}\n\n## Recommendation\n"
+                    + "\n".join(rec_lines)
+                )
+            else:
+                text = f"{text.rstrip()}\n\n## Recommendation\n{rec_line}"
 
         return {
             "text": text,
@@ -627,4 +862,5 @@ class FinancialAnalysisTeam:
             "recommendation": recommendation,
             "ratios": ratios,
             "realtime": live_quote,
+            "comparison": comparison,
         }

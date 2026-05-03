@@ -22,6 +22,7 @@ Usage:
 
 import sys
 
+from rich.columns import Columns
 from rich.console import Console, Group
 from rich.markdown import Markdown
 from rich.panel import Panel
@@ -63,6 +64,7 @@ def fmt(value):
 
 
 _LIVE_BLOCK_HEADER = "**Live market data for"
+_COMPARISON_HEADER = "**Comparing"
 
 
 def strip_live_quote_block(text):
@@ -77,6 +79,22 @@ def strip_live_quote_block(text):
         return text
     for i in range(1, len(lines)):
         if lines[i].strip() == "":
+            return "\n".join(lines[i + 1:]).lstrip()
+    return ""
+
+
+def strip_comparison_block(text):
+    """Remove an auto-prepended comparison table from the agent text."""
+    if not text:
+        return text
+    lines = text.split("\n")
+    if not lines or not lines[0].lstrip().startswith(_COMPARISON_HEADER):
+        return text
+    seen_table = False
+    for i in range(1, len(lines)):
+        if lines[i].lstrip().startswith("|"):
+            seen_table = True
+        elif seen_table and lines[i].strip() == "":
             return "\n".join(lines[i + 1:]).lstrip()
     return ""
 
@@ -191,10 +209,10 @@ def _fmt_change(c, p):
     return "$0.00 (0.00%)", "white"
 
 
-def show_live_market_data(console, realtime):
-    """Render the live yfinance quote as a rich Panel + Table."""
+def _make_live_market_data_panel(realtime):
+    """Build (but don't print) a rich Panel containing the live yfinance quote."""
     if not realtime or realtime.get("error"):
-        return
+        return None
 
     change_text, change_color = _fmt_change(
         realtime.get("price_change"),
@@ -224,14 +242,59 @@ def show_live_market_data(console, realtime):
     table.add_row("Next Earnings", realtime.get("next_earnings_date") or "n/a")
 
     title = (
-        f"[bold]Live market data — {realtime.get('ticker', '?')}[/] "
-        f"[dim]as of {realtime.get('timestamp', 'now')}[/]"
+        f"[bold]Live — {realtime.get('ticker', '?')}[/] "
+        f"[dim]{realtime.get('timestamp', 'now')}[/]"
     )
-    console.print(Panel(
+    return Panel(
         Group(headline, Text(""), table),
         title=title,
         border_style="green",
-    ))
+    )
+
+
+def show_live_market_data(console, realtime):
+    """Render a single live-yfinance-quote Panel."""
+    panel = _make_live_market_data_panel(realtime)
+    if panel is not None:
+        console.print(panel)
+
+
+def show_comparison_panels(console, comparison):
+    """
+    Render two Live Market Data panels side by side (and one recommendation
+    panel per ticker below them).
+
+    `comparison` is the list returned by FinancialAnalysisTeam.run when two
+    tickers were detected — each entry has 'ticker', 'realtime',
+    'csp_verdict', 'recommendation'.
+    """
+    if not comparison or len(comparison) < 2:
+        return
+
+    panels = []
+    for block in comparison:
+        p = _make_live_market_data_panel(block.get("realtime"))
+        if p is not None:
+            panels.append(p)
+    if panels:
+        console.print(Columns(panels, expand=True, equal=True))
+
+    # Recommendation panels — also side by side, one per ticker.
+    rec_panels = []
+    for block in comparison:
+        rec = block.get("recommendation") or {}
+        color = _REC_BORDER.get(rec.get("color"), "white")
+        body = (
+            f"[bold {color}]{rec.get('emoji', '')} {rec.get('label', '')}[/]\n"
+            f"[bold]{rec.get('summary', '')}[/]"
+        )
+        rec_panels.append(Panel(
+            body,
+            title=f"[bold]{block['ticker']}[/]",
+            border_style=color,
+        ))
+    if rec_panels:
+        console.print(Columns(rec_panels, expand=True, equal=True))
 
 
 def show_recommendation(console, ticker, recommendation):
@@ -256,18 +319,28 @@ def show_recommendation(console, ticker, recommendation):
 def show_response(console, ticker, result):
     """
     Render a chat response. `result` is the dict returned by
-    FinancialAnalysisTeam.run — we render the live-market-data panel
-    (if any), the CSP-driven recommendation banner, then the LLM's
-    narrative answer.
+    FinancialAnalysisTeam.run.
+
+    Compare mode (two tickers detected): two Live Market Data panels +
+    two recommendation panels rendered side-by-side, then the LLM
+    narrative below.
+
+    Single mode: one live-quote panel (when present), the CSP-driven
+    recommendation banner, then the LLM narrative.
     """
     if isinstance(result, dict):
+        comparison = result.get("comparison")
         realtime = result.get("realtime")
-        if realtime:
-            show_live_market_data(console, realtime)
-        show_recommendation(console, ticker, result.get("recommendation"))
         text = result.get("text", "")
-        if realtime:
-            text = strip_live_quote_block(text)
+
+        if comparison:
+            show_comparison_panels(console, comparison)
+            text = strip_comparison_block(text)
+        else:
+            if realtime:
+                show_live_market_data(console, realtime)
+                text = strip_live_quote_block(text)
+            show_recommendation(console, ticker, result.get("recommendation"))
     else:
         text = result
 
