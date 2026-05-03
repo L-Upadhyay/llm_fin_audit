@@ -2,6 +2,8 @@
 
 A hybrid classical-AI + LLM system that catches when a language-model financial agent hallucinates numbers, breaks hard constraints, or misreads compliance rules — and corrects it.
 
+> **BU MET CS 664 Term Project — Spring 2026. Student: Lucky Upadhyay.**
+
 ## 💡 What it does
 
 LLMs are confidently wrong about finance. They invent ratios, miss covenants, and label distressed companies "healthy." That's fine for chat, fatal for audit.
@@ -22,6 +24,8 @@ I built llm_fin_audit to wrap an LLM agent team with a deterministic classical l
 - **Forward-chaining knowledge base** (`src/classical/knowledge_base.py`) — Horn-clause Clause / KnowledgeBase engine with a six-rule compliance ruleset
 - **Earnings anomaly detector** (`src/classical/anomaly_detector.py`) — z-score outlier flagging, linear-search worst-quarter lookup, half-vs-half trend classification
 - **Agno multi-agent team** (`src/llm/agno_agents.py`) — DataAgent / AnalysisAgent / ComplianceAgent on Ollama llama3.2, each calling into the classical layer through @tool wrappers
+- **Live Market Data** (`src/data/loader.py`) — real-time price, day change ▲▼, previous close, today's range, 52-week range, volume, market cap, dividend yield, beta, and next earnings date — all pulled live from yfinance with a timestamp
+- **HOLD / WATCH / AVOID recommendation system** — verdict driven by the classical CSP result, never the LLM's opinion; rendered as a colored banner in both the web app and the terminal chatbot
 - **Multi-stock comparator** (`src/classical/comparator.py`) — side-by-side comparison, composite-risk ranking, and matplotlib charts
 - **Evaluation harness** (`src/evaluation/benchmark.py`) — runs classical-only, LLM-only, and hybrid on the same ticker, captures response times, and flags constraint violations
 - **CLI surfaces** — `run_demo.py` (rich-terminal classical demo), `run_agent.py` (multi-agent demo), `chat.py` (interactive non-coder chatbot)
@@ -54,6 +58,8 @@ The LLM cannot output a final verdict until at least one tool call into the clas
 Clone, install dependencies, then pick an interface.
 
 ```bash
+git clone https://github.com/L-Upadhyay/llm_fin_audit
+cd llm_fin_audit
 conda activate spring_2026
 pip install -r requirements.txt
 ```
