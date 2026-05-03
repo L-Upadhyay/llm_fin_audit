@@ -99,6 +99,28 @@ def render_severity_box(severity):
         st.info(text)
 
 
+def _clean_response(text):
+    """
+    Strip out raw tool-call JSON that occasionally leaks through Agno's
+    team coordinator into the displayed answer.
+    """
+    if not text:
+        return text
+    cleaned = []
+    for line in text.split("\n"):
+        stripped = line.strip()
+        if "delegate_task_to_member" in line:
+            continue
+        if (
+            stripped.startswith("{")
+            and '"name":' in stripped
+            and '"parameters":' in stripped
+        ):
+            continue
+        cleaned.append(line)
+    return "\n".join(cleaned).strip()
+
+
 def render_ratios_table(ratios):
     rows = [
         {"Ratio": "Debt-to-Equity", "Value": ratios.get("debt_to_equity")},
@@ -618,6 +640,7 @@ def render_chat_tab():
         with st.spinner(f"Thinking about {ticker}... (this may take a minute)"):
             try:
                 response = st.session_state.team.run(ticker, user_input)
+                response = _clean_response(response)
             except Exception as e:
                 response = (
                     f"The agent team hit a problem: {e}\n\n"

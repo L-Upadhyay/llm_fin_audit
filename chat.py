@@ -61,6 +61,28 @@ def fmt(value):
     return "n/a" if value is None else f"{value:.3f}"
 
 
+def _clean_response(text):
+    """
+    Strip out raw tool-call JSON that occasionally leaks through Agno's
+    team coordinator into the displayed answer.
+    """
+    if not text:
+        return text
+    cleaned = []
+    for line in text.split("\n"):
+        stripped = line.strip()
+        if "delegate_task_to_member" in line:
+            continue
+        if (
+            stripped.startswith("{")
+            and '"name":' in stripped
+            and '"parameters":' in stripped
+        ):
+            continue
+        cleaned.append(line)
+    return "\n".join(cleaned).strip()
+
+
 # ---------------------------------------------------------------------- #
 # Display helpers
 # ---------------------------------------------------------------------- #
@@ -115,6 +137,7 @@ def show_summary(console, ticker, ratios, earnings):
 
 
 def show_response(console, ticker, response):
+    response = _clean_response(response)
     body = Markdown(response or "_(empty response)_")
     console.print(Panel(
         body,
