@@ -36,6 +36,73 @@ from src.data.loader import (
 )
 
 
+# Keywords that mark a question as needing live market data. Used both for
+# upstream prompt injection (so the LLM always has a fresh quote to quote
+# from) and for the routing rules in the team coordinator.
+_PRICE_KEYWORDS = (
+    "price", "current price", "stock price", "share price",
+    "today", "today's", "open", "high", "low",
+    "volume",
+    "52-week", "52 week", "fifty-two week", "fifty two week",
+    "market cap", "market capitalization", "marketcap",
+    "value", "valued", "worth", "trading at", "how much",
+    "quote",
+)
+
+
+def _is_price_question(question: str) -> bool:
+    """True if the user's question is about live market data."""
+    if not question:
+        return False
+    low = question.lower()
+    return any(kw in low for kw in _PRICE_KEYWORDS)
+
+
+def _format_market_cap_short(value):
+    """Render market cap as $X.XXT / $X.XXB / $X.XXM, or n/a."""
+    if value is None:
+        return "n/a"
+    abs_v = abs(value)
+    if abs_v >= 1e12:
+        return f"${value / 1e12:.2f}T"
+    if abs_v >= 1e9:
+        return f"${value / 1e9:.2f}B"
+    if abs_v >= 1e6:
+        return f"${value / 1e6:.2f}M"
+    return f"${value:,.0f}"
+
+
+def _format_live_quote_block(quote: dict) -> str:
+    """
+    Format a get_realtime_price() result as a markdown block.
+
+    Used to prepend authoritative live numbers to chat responses so that
+    price questions are answered correctly even if the LLM skips the
+    tool call.
+    """
+    if not quote or quote.get("error"):
+        return ""
+
+    def price(v):
+        return "n/a" if v is None else f"${v:,.2f}"
+
+    def vol(v):
+        return "n/a" if v is None else f"{int(v):,}"
+
+    lines = [
+        f"**Live market data for {quote.get('ticker', '?')}:**",
+        f"- Current Price: {price(quote.get('current_price'))}",
+        f"- Today's Open: {price(quote.get('open'))}",
+        f"- Today's High: {price(quote.get('day_high'))}",
+        f"- Today's Low: {price(quote.get('day_low'))}",
+        f"- 52-Week High: {price(quote.get('fifty_two_week_high'))}",
+        f"- 52-Week Low: {price(quote.get('fifty_two_week_low'))}",
+        f"- Volume: {vol(quote.get('volume'))}",
+        f"- Market Cap: {_format_market_cap_short(quote.get('market_cap'))}",
+    ]
+    return "\n".join(lines)
+
+
 MODEL_ID = "llama3.2"
 
 
@@ -294,12 +361,40 @@ class FinancialAnalysisTeam:
     # Base instructions — never reference a specific ticker. The ticker
     # directive is appended at runtime by _set_ticker.
     BASE_DATA_INSTRUCTIONS = [
-        "You fetch real financial data using your tools — never invent numbers.",
-        "Call get_financial_ratios_tool with the bound ticker for ratio questions.",
-        "Call get_realtime_price_tool with the bound ticker for any question about "
-        "current price, today's open/high/low, volume, 52-week high or low, or "
-        "market cap. Quote those numbers verbatim — never use figures from your "
-        "training data.",
+        "You are DataAgent. You fetch REAL financial data using your tools "
+        "and never invent numbers from memory.",
+        "You have exactly two tools: get_financial_ratios_tool and "
+        "get_realtime_price_tool. You MUST use one of them.",
+
+        # Hard rule for price-related questions.
+        "MANDATORY RULE — REAL-TIME DATA: If the question mentions ANY of "
+        "these words or phrases, you MUST call get_realtime_price_tool "
+        "with the bound ticker before you reply: "
+        "'price', 'current price', 'today', 'open', 'high', 'low', "
+        "'volume', '52-week', '52 week', 'fifty-two week', 'market cap', "
+        "'market capitalization', 'value', 'worth', 'trading at', "
+        "'how much', 'quote', 'stock price', 'share price'. "
+        "There is NO exception to this rule. Calling the tool is the only "
+        "way to get accurate live numbers — your training data is months "
+        "or years old and will be wrong.",
+
+        # Concrete examples so the LLM has a pattern to match.
+        "Examples that REQUIRE get_realtime_price_tool:",
+        "  - 'What is the current price?' -> call get_realtime_price_tool",
+        "  - 'What's NVDA worth today?' -> call get_realtime_price_tool",
+        "  - 'How much is the stock trading at?' -> call get_realtime_price_tool",
+        "  - 'What is the 52-week high?' -> call get_realtime_price_tool",
+        "  - 'What is the market cap?' -> call get_realtime_price_tool",
+        "  - 'What was today's open?' -> call get_realtime_price_tool",
+        "  - 'What is the trading volume?' -> call get_realtime_price_tool",
+
+        "After the tool returns, quote each number verbatim from the JSON "
+        "result. Never round to a memorized number. Never say 'around' or "
+        "'approximately' if the JSON has the exact value.",
+
+        "For ratio questions (debt-to-equity, current ratio, P/E, ROE, "
+        "margins, etc.) call get_financial_ratios_tool instead.",
+        "If a question covers BOTH price and ratios, call BOTH tools.",
         "Report the raw numbers clearly with no editorializing.",
     ]
     BASE_ANALYSIS_INSTRUCTIONS = [
@@ -316,14 +411,37 @@ class FinancialAnalysisTeam:
     ]
     BASE_TEAM_INSTRUCTIONS = [
         "You lead a financial-analysis team backed by classical AI tools.",
-        "Delegate ratio lookups to DataAgent.",
-        "Delegate any question about current price, today's open/high/low, "
-        "volume, 52-week high/low, or market cap to DataAgent so it can call "
-        "get_realtime_price_tool — never answer with prices from memory.",
+
+        # Aggressive routing for live market data — placed at the top so
+        # it's the first rule the coordinator considers.
+        "MANDATORY ROUTING — LIVE MARKET DATA: If the user's question "
+        "mentions ANY of: 'price', 'current price', 'today', 'open', "
+        "'high', 'low', 'volume', '52-week', '52 week', 'fifty-two week', "
+        "'market cap', 'market capitalization', 'value', 'worth', "
+        "'trading at', 'how much', 'quote', 'stock price', or "
+        "'share price', you MUST delegate to DataAgent FIRST and require "
+        "it to call get_realtime_price_tool. You are FORBIDDEN from "
+        "answering price/value/52-week/volume/market-cap questions from "
+        "your own memory. Every such number must come from the tool's "
+        "JSON output, copied verbatim.",
+
+        "Examples and the tool that must be used:",
+        "  - 'What is the current price of NVDA?' -> DataAgent + "
+        "get_realtime_price_tool",
+        "  - 'How is AAPL valued today?' -> DataAgent + "
+        "get_realtime_price_tool",
+        "  - 'What is the 52-week high?' -> DataAgent + "
+        "get_realtime_price_tool",
+        "  - 'What is the market cap?' -> DataAgent + "
+        "get_realtime_price_tool",
+
+        "Delegate ratio lookups (D/E, current ratio, P/E, ROE, margins) "
+        "to DataAgent (it will call get_financial_ratios_tool).",
         "Delegate constraint and anomaly checks to AnalysisAgent.",
         "Delegate compliance/risk checks to ComplianceAgent.",
         "Synthesize their outputs into a single grounded verdict.",
-        "Never invent numbers — every claim must come from a tool result.",
+        "Never invent numbers — every claim must come from a tool result. "
+        "If a tool failed, say so explicitly instead of guessing.",
         "ALWAYS end your reply with a markdown section titled "
         "'## Recommendation' on its own line.",
         "The Recommendation section MUST contain exactly one of these three "
@@ -419,16 +537,48 @@ class FinancialAnalysisTeam:
         recommendation = recommendation_for_verdict(csp_verdict)
         rec_line = _recommendation_line(recommendation)
 
-        prompt = (
-            f"Ticker: {ticker}\n"
-            f"Question: {question}\n\n"
-            f"Use the ticker '{ticker}' verbatim in every tool call.\n\n"
-            f"CSP verdict (from the classical layer): {csp_verdict}\n"
+        prompt_parts = [
+            f"Ticker: {ticker}",
+            f"Question: {question}",
+            "",
+            f"Use the ticker '{ticker}' verbatim in every tool call.",
+            "",
+            f"CSP verdict (from the classical layer): {csp_verdict}",
             f"Use this verdict to drive the Recommendation section. "
-            f"The exact line to copy verbatim is: {rec_line}"
-        )
+            f"The exact line to copy verbatim is: {rec_line}",
+        ]
+
+        # If the question is about live market data, pre-fetch the quote and
+        # inject it as authoritative ground truth. The DataAgent is also
+        # instructed to call get_realtime_price_tool, but smaller LLMs
+        # sometimes skip the tool call — having the JSON in the prompt means
+        # the answer is grounded either way.
+        live_quote = None
+        if _is_price_question(question):
+            live_quote = get_realtime_price(ticker)
+            prompt_parts.extend([
+                "",
+                "LIVE MARKET DATA (authoritative — quote these exact numbers, "
+                "never substitute training-data figures):",
+                json.dumps(live_quote, indent=2),
+                "",
+                "When answering anything about price, today's open/high/low, "
+                "volume, 52-week high/low, or market cap, use ONLY the values "
+                "above. Format prices as $X.XX and market cap with a "
+                "T/B suffix (e.g. $4.82T).",
+            ])
+
+        prompt = "\n".join(prompt_parts)
         response = self.team.run(prompt)
         text = response.content or ""
+
+        # For price questions, prepend a deterministic live-quote block so
+        # the user always sees correct numbers — independent of whether the
+        # LLM actually invoked the realtime tool.
+        if live_quote is not None:
+            quote_block = _format_live_quote_block(live_quote)
+            if quote_block:
+                text = f"{quote_block}\n\n{text.lstrip()}"
 
         # Belt-and-suspenders: if the LLM forgot the section, append it. The
         # banner is rendered separately upstream, so the user never misses it.
