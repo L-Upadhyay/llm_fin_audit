@@ -136,9 +136,42 @@ def show_summary(console, ticker, ratios, earnings):
     ))
 
 
-def show_response(console, ticker, response):
-    response = _clean_response(response)
-    body = Markdown(response or "_(empty response)_")
+_REC_BORDER = {"green": "green", "yellow": "yellow", "red": "red"}
+
+
+def show_recommendation(console, ticker, recommendation):
+    """Render the CSP-driven recommendation banner above the answer."""
+    if not recommendation:
+        return
+    label = recommendation.get("label", "")
+    emoji = recommendation.get("emoji", "")
+    summary = recommendation.get("summary", "")
+    color = _REC_BORDER.get(recommendation.get("color"), "white")
+    body = (
+        f"[bold {color}]{emoji} {label}[/]\n"
+        f"[bold]{summary}[/]"
+    )
+    console.print(Panel(
+        body,
+        title=f"[bold]Recommendation for {ticker}[/]",
+        border_style=color,
+    ))
+
+
+def show_response(console, ticker, result):
+    """
+    Render a chat response. `result` is the dict returned by
+    FinancialAnalysisTeam.run — we render the colored CSP-driven
+    recommendation first, then the LLM's narrative answer.
+    """
+    if isinstance(result, dict):
+        show_recommendation(console, ticker, result.get("recommendation"))
+        text = result.get("text", "")
+    else:
+        text = result
+
+    text = _clean_response(text)
+    body = Markdown(text or "_(empty response)_")
     console.print(Panel(
         body,
         title=f"[bold]Answer about {ticker}[/]",

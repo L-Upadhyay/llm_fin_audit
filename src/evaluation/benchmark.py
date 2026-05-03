@@ -113,9 +113,15 @@ def run_hybrid(ticker, question):
     """
     Hybrid condition: full FinancialAnalysisTeam (DataAgent + AnalysisAgent
     + ComplianceAgent) with classical tools wired in.
+
+    `team.run` returns a dict with the synthesized text plus the CSP-driven
+    recommendation; the benchmark only consumes the natural-language text.
     """
     team = FinancialAnalysisTeam(ticker=ticker)
-    return team.run(ticker, question)
+    result = team.run(ticker, question)
+    if isinstance(result, dict):
+        return result.get("text", "")
+    return result
 
 
 # ---------------------------------------------------------------------- #

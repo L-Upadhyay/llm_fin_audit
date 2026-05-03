@@ -39,6 +39,54 @@ from src.data.loader import (
 MODEL_ID = "llama3.2"
 
 
+# ---------------------------------------------------------------------------
+# Recommendation derived from the CSP verdict
+# ---------------------------------------------------------------------------
+# The recommendation shown at the top of every chat answer is driven by the
+# classical CSP verdict, never by the LLM's opinion. Keeping this as a single
+# source of truth means the colored banner in chat.py / app.py and the
+# Recommendation section the LLM is instructed to emit always agree.
+
+RECOMMENDATION_BY_VERDICT = {
+    "PASS": {
+        "label": "HOLD",
+        "emoji": "✅",
+        "summary": "Ratios are within healthy ranges",
+        "color": "green",
+    },
+    "WARNING": {
+        "label": "WATCH",
+        "emoji": "⚠️",
+        "summary": "Monitor these metrics closely",
+        "color": "yellow",
+    },
+    "FAIL": {
+        "label": "AVOID/REVIEW",
+        "emoji": "🔴",
+        "summary": "One or more metrics are critical",
+        "color": "red",
+    },
+}
+
+
+def recommendation_for_verdict(verdict: str) -> dict:
+    """Return the {label, emoji, summary, color} block for a CSP verdict."""
+    return RECOMMENDATION_BY_VERDICT.get(
+        verdict,
+        {
+            "label": "UNKNOWN",
+            "emoji": "❔",
+            "summary": "Classical layer did not return a verdict",
+            "color": "white",
+        },
+    )
+
+
+def _recommendation_line(rec: dict) -> str:
+    """Render the exact 'Recommendation' line we want at the end of answers."""
+    return f"{rec['emoji']} {rec['label']} — {rec['summary']}"
+
+
 # Sentinels we've seen LLMs hallucinate when an instruction says "the user's
 # ticker" without binding a specific value. Tool calls with any of these are
 # rejected and the LLM is told to retry with the real symbol.
@@ -269,6 +317,16 @@ class FinancialAnalysisTeam:
         "Delegate compliance/risk checks to ComplianceAgent.",
         "Synthesize their outputs into a single grounded verdict.",
         "Never invent numbers — every claim must come from a tool result.",
+        "ALWAYS end your reply with a markdown section titled "
+        "'## Recommendation' on its own line.",
+        "The Recommendation section MUST contain exactly one of these three "
+        "lines, picked from the CSP verdict the user provides at the bottom "
+        "of the prompt — do not invent your own:",
+        "  - if CSP verdict is PASS:    '✅ HOLD — Ratios are within healthy ranges'",
+        "  - if CSP verdict is WARNING: '⚠️ WATCH — Monitor these metrics closely'",
+        "  - if CSP verdict is FAIL:    '🔴 AVOID/REVIEW — One or more metrics are critical'",
+        "Copy that line verbatim, including the emoji and dash. Then add one "
+        "short sentence explaining the call in your own words.",
     ]
 
     def __init__(self, model_id: str = MODEL_ID, ticker: str = None):
@@ -332,17 +390,47 @@ class FinancialAnalysisTeam:
     # Public entry point
     # ------------------------------------------------------------------ #
 
-    def run(self, ticker: str, question: str) -> str:
+    def run(self, ticker: str, question: str) -> dict:
         """
-        Bind `ticker` into every agent's instructions, then run the team.
-        Returns the synthesized natural-language response.
+        Bind `ticker` into every agent's instructions, run the classical CSP
+        for the official recommendation, and then run the team.
+
+        Returns:
+            {
+              "text": str,                  # the LLM team's natural-language reply
+              "csp_verdict": str,           # PASS / WARNING / FAIL
+              "recommendation": dict,       # {label, emoji, summary, color}
+              "ratios": dict,               # the ratios CSP ran against
+            }
         """
         ticker = ticker.upper()
         self._set_ticker(ticker)
+
+        # Classical layer is the single source of truth for the recommendation.
+        ratios = get_financial_ratios(ticker)
+        csp_verdict = FinancialCSP().solve(ratios)
+        recommendation = recommendation_for_verdict(csp_verdict)
+        rec_line = _recommendation_line(recommendation)
+
         prompt = (
             f"Ticker: {ticker}\n"
             f"Question: {question}\n\n"
-            f"Use the ticker '{ticker}' verbatim in every tool call."
+            f"Use the ticker '{ticker}' verbatim in every tool call.\n\n"
+            f"CSP verdict (from the classical layer): {csp_verdict}\n"
+            f"Use this verdict to drive the Recommendation section. "
+            f"The exact line to copy verbatim is: {rec_line}"
         )
         response = self.team.run(prompt)
-        return response.content
+        text = response.content or ""
+
+        # Belt-and-suspenders: if the LLM forgot the section, append it. The
+        # banner is rendered separately upstream, so the user never misses it.
+        if "## Recommendation" not in text:
+            text = f"{text.rstrip()}\n\n## Recommendation\n{rec_line}"
+
+        return {
+            "text": text,
+            "csp_verdict": csp_verdict,
+            "recommendation": recommendation,
+            "ratios": ratios,
+        }

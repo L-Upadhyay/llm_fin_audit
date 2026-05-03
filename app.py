@@ -121,6 +121,28 @@ def _clean_response(text):
     return "\n".join(cleaned).strip()
 
 
+def _render_recommendation_banner(recommendation):
+    """
+    Render the CSP-driven recommendation as a colored Streamlit status box
+    above the LLM's answer. Color: green = HOLD, yellow = WATCH, red = AVOID.
+    """
+    if not recommendation:
+        return
+    label = recommendation.get("label", "")
+    emoji = recommendation.get("emoji", "")
+    summary = recommendation.get("summary", "")
+    text = f"### {emoji} {label}\n{summary}"
+    color = recommendation.get("color")
+    if color == "green":
+        st.success(text)
+    elif color == "yellow":
+        st.warning(text)
+    elif color == "red":
+        st.error(text)
+    else:
+        st.info(text)
+
+
 # Display order + labels for the full ratio set. Margin/ROE values come
 # back from yfinance as decimals (0.46 = 46%), so they get a percent
 # format; the rest are absolute multiples shown to 3 decimals.
@@ -689,6 +711,8 @@ def render_chat_tab():
     # Existing history
     for msg in st.session_state.chat_messages:
         with st.chat_message(msg["role"]):
+            if msg["role"] == "assistant" and msg.get("recommendation"):
+                _render_recommendation_banner(msg["recommendation"])
             st.markdown(msg["content"])
 
     user_input = st.chat_input("Ask anything about this stock...")
@@ -723,19 +747,31 @@ def render_chat_tab():
 
     # Run the team
     with st.chat_message("assistant"):
+        recommendation = None
         with st.spinner(f"Thinking about {ticker}... (this may take a minute)"):
             try:
-                response = st.session_state.team.run(ticker, user_input)
-                response = _clean_response(response)
+                result = st.session_state.team.run(ticker, user_input)
+                response = _clean_response(result.get("text", ""))
+                recommendation = result.get("recommendation")
             except Exception as e:
                 response = (
                     f"The agent team hit a problem: {e}\n\n"
                     "Make sure Ollama is running."
                 )
+
+        # CSP-driven recommendation banner — rendered above the LLM answer.
+        if recommendation:
+            _render_recommendation_banner(recommendation)
+
         st.markdown(response)
 
+    # Persist both the banner state and the response so reruns redraw cleanly.
     st.session_state.chat_messages.append(
-        {"role": "assistant", "content": response}
+        {
+            "role": "assistant",
+            "content": response,
+            "recommendation": recommendation,
+        }
     )
 
 
