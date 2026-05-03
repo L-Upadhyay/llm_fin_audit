@@ -1,6 +1,10 @@
 """Smoke test for the financial data loader."""
 
-from src.data.loader import get_financial_ratios, get_earnings_history
+from src.data.loader import (
+    get_earnings_history,
+    get_financial_ratios,
+    get_realtime_price,
+)
 
 
 def test_get_financial_ratios_aapl():
@@ -25,6 +29,20 @@ def test_get_earnings_history_aapl():
     assert "quarterly_eps" in earnings
 
 
+def test_get_realtime_price_aapl():
+    quote = get_realtime_price("AAPL")
+    print("\nRealtime quote for AAPL:")
+    for key, value in quote.items():
+        print(f"  {key}: {value}")
+
+    assert quote["ticker"] == "AAPL"
+    assert "current_price" in quote
+    assert quote["current_price"] is not None, "current_price should be live"
+    assert isinstance(quote["current_price"], (int, float))
+    assert quote["current_price"] > 0
+
+
 if __name__ == "__main__":
     print(get_financial_ratios("AAPL"))
     print(get_earnings_history("AAPL"))
+    print(get_realtime_price("AAPL"))

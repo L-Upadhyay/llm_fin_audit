@@ -86,6 +86,102 @@ def get_financial_ratios(ticker: str) -> dict:
     }
 
 
+def _coerce_float(value):
+    """Cast to float, treating None/NaN/non-numeric as None."""
+    if value is None:
+        return None
+    try:
+        value = float(value)
+    except (TypeError, ValueError):
+        return None
+    return value if value == value else None
+
+
+def get_realtime_price(ticker: str) -> dict:
+    """
+    Fetch live market data for `ticker` via yfinance.
+
+    Pulls from `fast_info` (cheap, near-realtime) and falls back to `info`
+    for fields fast_info doesn't expose. Any field that can't be retrieved
+    is returned as None rather than raising.
+
+    Returns:
+        {
+          "ticker": "AAPL",
+          "current_price": float | None,
+          "open": float | None,
+          "day_high": float | None,
+          "day_low": float | None,
+          "volume": int | None,
+          "fifty_two_week_high": float | None,
+          "fifty_two_week_low": float | None,
+          "market_cap": float | None,
+          "error": str | None,
+        }
+    """
+    result = {
+        "ticker": ticker.upper(),
+        "current_price": None,
+        "open": None,
+        "day_high": None,
+        "day_low": None,
+        "volume": None,
+        "fifty_two_week_high": None,
+        "fifty_two_week_low": None,
+        "market_cap": None,
+        "error": None,
+    }
+
+    try:
+        stock = yf.Ticker(ticker)
+        fast = {}
+        try:
+            fast = dict(stock.fast_info)
+        except Exception:
+            fast = {}
+
+        result["current_price"] = _coerce_float(fast.get("last_price"))
+        result["open"] = _coerce_float(fast.get("open"))
+        result["day_high"] = _coerce_float(fast.get("day_high"))
+        result["day_low"] = _coerce_float(fast.get("day_low"))
+        result["fifty_two_week_high"] = _coerce_float(fast.get("year_high"))
+        result["fifty_two_week_low"] = _coerce_float(fast.get("year_low"))
+        result["market_cap"] = _coerce_float(fast.get("market_cap"))
+
+        volume = _coerce_float(fast.get("last_volume"))
+        if volume is None:
+            volume = _coerce_float(fast.get("regular_market_volume"))
+        result["volume"] = int(volume) if volume is not None else None
+
+        # Fall back to the slower `info` dict for anything fast_info missed.
+        missing = [k for k, v in result.items() if v is None and k not in ("ticker", "error")]
+        if missing:
+            try:
+                info = stock.info or {}
+            except Exception:
+                info = {}
+            fallback_keys = {
+                "current_price": ("currentPrice", "regularMarketPrice"),
+                "open": ("open", "regularMarketOpen"),
+                "day_high": ("dayHigh", "regularMarketDayHigh"),
+                "day_low": ("dayLow", "regularMarketDayLow"),
+                "volume": ("volume", "regularMarketVolume"),
+                "fifty_two_week_high": ("fiftyTwoWeekHigh",),
+                "fifty_two_week_low": ("fiftyTwoWeekLow",),
+                "market_cap": ("marketCap",),
+            }
+            for field in missing:
+                for src_key in fallback_keys.get(field, ()):
+                    val = _coerce_float(info.get(src_key))
+                    if val is not None:
+                        result[field] = int(val) if field == "volume" else val
+                        break
+    except Exception as e:
+        result["error"] = f"Couldn't fetch realtime price for {ticker}: {e}"
+
+    return result
+
+
 def get_earnings_history(ticker: str, num_quarters: int = 8) -> dict:
     """
     Fetch the last `num_quarters` quarters of reported EPS for `ticker`.

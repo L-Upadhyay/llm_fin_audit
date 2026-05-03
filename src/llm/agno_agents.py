@@ -29,7 +29,11 @@ from agno.tools import tool
 from src.classical.anomaly_detector import detect_earnings_anomaly
 from src.classical.csp_solver import FinancialCSP
 from src.classical.knowledge_base import run_compliance_check
-from src.data.loader import get_earnings_history, get_financial_ratios
+from src.data.loader import (
+    get_earnings_history,
+    get_financial_ratios,
+    get_realtime_price,
+)
 
 
 MODEL_ID = "llama3.2"
@@ -92,6 +96,25 @@ def get_financial_ratios_tool(ticker: str) -> str:
         return _placeholder_error(ticker)
     ratios = get_financial_ratios(symbol)
     return json.dumps(ratios)
+
+
+@tool
+def get_realtime_price_tool(ticker: str) -> str:
+    """
+    Fetch live market data (current price, today's open/high/low, volume,
+    52-week high and low, market cap) for the given stock ticker.
+
+    `ticker` MUST be the literal stock symbol such as 'AAPL'. Do NOT pass
+    the word 'ticker' or any placeholder — pass the exact symbol from the
+    user's message.
+
+    Returns a JSON string with the realtime quote.
+    """
+    symbol = _normalize_ticker(ticker)
+    if symbol is None:
+        return _placeholder_error(ticker)
+    quote = get_realtime_price(symbol)
+    return json.dumps(quote)
 
 
 @tool
@@ -169,11 +192,11 @@ def detect_anomalies_tool(ticker: str) -> str:
 # ---------------------------------------------------------------------------
 
 def make_data_agent(model, instructions=None):
-    """DataAgent — fetches raw financial ratios for a ticker."""
+    """DataAgent — fetches raw financial ratios and live quotes for a ticker."""
     return Agent(
         name="DataAgent",
         model=model,
-        tools=[get_financial_ratios_tool],
+        tools=[get_financial_ratios_tool, get_realtime_price_tool],
         instructions=list(instructions or []),
         markdown=True,
     )
