@@ -3,6 +3,7 @@ numpy
 matplotlib
 yfinance
 agno
+openai
 ollama
 pytest
 rich

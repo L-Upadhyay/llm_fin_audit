@@ -51,9 +51,29 @@ def get_financial_ratios(ticker: str) -> dict:
     balance_sheet = stock.balance_sheet
     income_stmt = stock.income_stmt
 
+    # Guard: yfinance returns an empty DataFrame when rate-limited or when a
+    # ticker has no filing history. Indexing an empty frame raises IndexError,
+    # so we return None-filled ratios early rather than crashing.
+    if balance_sheet is None or balance_sheet.empty or balance_sheet.shape[1] == 0:
+        try:
+            info = stock.info or {}
+        except Exception:
+            info = {}
+        return {
+            "ticker": ticker.upper(),
+            "debt_to_equity": None,
+            "current_ratio": None,
+            "interest_coverage_ratio": None,
+            "pe_ratio": _coerce_float(info.get("trailingPE")),
+            "roe": _coerce_float(info.get("returnOnEquity")),
+            "gross_margin": _coerce_float(info.get("grossMargins")),
+            "net_profit_margin": _coerce_float(info.get("profitMargins")),
+            "quick_ratio": _coerce_float(info.get("quickRatio")),
+        }
+
     # Pull the most recent fiscal year (column 0)
     bs = balance_sheet.iloc[:, 0]
-    is_ = income_stmt.iloc[:, 0]
+    is_ = income_stmt.iloc[:, 0] if (income_stmt is not None and not income_stmt.empty and income_stmt.shape[1] > 0) else None
 
     # --- Debt-to-Equity = Total Debt / Stockholders Equity ---
     # Leverage gauge: how much of the firm is financed by creditors vs. owners.
@@ -77,12 +97,15 @@ def get_financial_ratios(ticker: str) -> dict:
     # Solvency gauge: how many times over operating earnings can cover interest.
     # Lenders typically want this >= 3. yfinance can sign Interest Expense
     # either way depending on the firm, so take the absolute value.
-    ebit = _safe_get(is_, "EBIT")
-    if ebit is None:
-        ebit = _safe_get(is_, "Operating Income")
-    interest = _safe_get(is_, "Interest Expense")
-    if interest is not None:
-        interest = abs(interest)
+    ebit = None
+    interest = None
+    if is_ is not None:
+        ebit = _safe_get(is_, "EBIT")
+        if ebit is None:
+            ebit = _safe_get(is_, "Operating Income")
+        interest = _safe_get(is_, "Interest Expense")
+        if interest is not None:
+            interest = abs(interest)
     interest_coverage_ratio = (
         ebit / interest if ebit is not None and interest not in (None, 0) else None
     )

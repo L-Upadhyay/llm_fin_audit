@@ -1,29 +1,126 @@
-# llm_fin_audit — CS 664 Term Project
+# llm_fin_audit — CLAUDE.md
 
-## Project Overview
-This project measures when LLM financial agents hallucinate numeric values, violate hard constraints, or break formal rules — and then corrects those failures using classical AI techniques.
+## Project Identity
+- Name: llm_fin_audit
+- GitHub: https://github.com/L-Upadhyay/llm_fin_audit
+- Course: BU MET CS 664 Artificial Intelligence, Prof. Suresh Kalathur, Spring 2026
+- Student: Lucky Upadhyay
+- Conda env: spring_2026
+- Python: 3.11
 
-## Student
-Lucky Upadhyay — BU MET MS Applied Data Analytics
-Course: MET CS 664 Artificial Intelligence (Prof. Suresh Kalathur, Spring 2026)
+## What This Project Does
+Hybrid classical-AI + LLM system that catches when LLM financial agents hallucinate numbers, break hard constraints, or misread compliance rules — and corrects them using a deterministic classical layer.
 
-## Architecture
 Two cooperating layers:
-- LLM layer (Agno + Ollama): proposes financial analysis
-- Classical layer (CSP + KB): verifies and corrects
-The LLM cannot output a final verdict until the classical layer verifies it first.
+1. Classical layer (deterministic) — CSP solver, KB forward chaining, anomaly detector, comparator
+2. LLM layer (Agno + Ollama llama3.2) — multi-agent team that CANNOT output a verdict until classical layer signs off
 
-## Three Core Tasks
-1. Financial ratio constraint checking (CSP)
-2. Earnings anomaly detection (search)
-3. Compliance rule verification (KB + forward chaining)
+## File Structure
+src/
+data/loader.py          — yfinance ratio extraction (8 ratios) + get_realtime_price() (16 fields)
+classical/
+csp_solver.py         — Variable, Constraint, FinancialCSP with AC-3 + backtracking + forward checking
+knowledge_base.py     — Horn-clause Clause/KnowledgeBase with forward chaining, 6 compliance rules
+anomaly_detector.py   — z-score outlier flagging, worst-quarter lookup, trend classification
+comparator.py         — multi-stock comparison, composite risk ranking, matplotlib charts
+llm/
+agno_agents.py        — DataAgent, AnalysisAgent, ComplianceAgent, FinancialAnalysisTeam
+evaluation/
+benchmark.py          — 3-condition evaluation harness (classical-only, LLM-only, hybrid)
+tests/                    — 22 pytest tests, all passing
+app.py                    — Streamlit web app (Analysis, Compare, Chat tabs)
+chat.py                   — Terminal interactive chatbot
+run_demo.py               — Terminal classical-only demo
+run_agent.py              — Terminal agent demo
 
-## Classical Components (write from scratch, standard library only)
-- CSP solver: backtracking + forward checking + AC-3
-- Knowledge base: Clause/KB classes + forward chaining
-- All subclassing Kalathur's AIMA Agent/Environment/Problem hierarchy
+## Critical Rules — DO NOT VIOLATE
 
-## LLM Components
-- Agno agents running on local Ollama (llama3.2, nomic-embed-text)
-- Custom @tool functions that call the classical layer
-- Multi-agent team: DataAgent,  AnalysisAgent, ComplianceAgent, ReportAgent
+### Classical layer
+- NO external solver libraries — no python-constraint, no ortools, no networkx
+- CSP written from scratch using only standard library
+- KB written from scratch using only standard library
+- All classical components must remain independently testable
+
+### LLM layer
+- LLM cannot output financial verdict without CSP solver verifying first
+- HOLD/WATCH/AVOID recommendation ALWAYS driven by CSP verdict, never LLM opinion
+- HOLD = CSP PASS (green), WATCH = CSP WARNING (yellow), AVOID = CSP FAIL (red)
+- Real-time price ALWAYS pre-fetched from yfinance and injected — never let LLM answer price questions from training data
+- Strip all raw JSON delegation text (delegate_task_to_member, DataAgent:, AnalysisAgent:, etc.) from responses before displaying
+
+### Tests
+- Always run pytest after any change
+- Must maintain 22 tests passing
+- Never break existing tests to add new features
+
+### Git
+- Commit after every working feature
+- Push to origin main
+- Clear descriptive commit messages
+
+## Financial Ratios (8 total)
+1. debt_to_equity — from ticker.info["debtToEquity"] / 100
+2. current_ratio — from ticker.info["currentRatio"]
+3. interest_coverage_ratio — calculated from financials
+4. quick_ratio — from ticker.info["quickRatio"]
+5. pe_ratio — from ticker.info["trailingPE"]
+6. roe — from ticker.info["returnOnEquity"]
+7. gross_margin — from ticker.info["grossMargins"]
+8. net_profit_margin — from ticker.info["profitMargins"]
+
+## Live Market Data Fields (16 total)
+current_price, open, day_high, day_low, volume, fifty_two_week_high, fifty_two_week_low, market_cap, timestamp, previous_close, price_change, price_change_percent, dividend_yield, beta, next_earnings_date, error
+
+## CSP Thresholds
+- debt_to_equity: healthy < 1.0, warning 1.0-2.0, critical > 2.0
+- current_ratio: healthy > 1.5, warning 1.0-1.5, critical < 1.0
+- interest_coverage: healthy > 3.0, warning 1.5-3.0, critical < 1.5
+- quick_ratio: healthy > 1.0, warning 0.5-1.0, critical < 0.5
+- pe_ratio: healthy < 50, warning 50-100, critical > 100
+- roe: healthy > 0.05, warning 0-0.05, critical < 0
+- gross_margin: healthy > 0.20, warning 0-0.20, critical < 0
+- net_profit_margin: healthy > 0.05, warning 0-0.05, critical < 0
+
+## KB Rules (6 rules)
+1. IF debt_to_equity_high THEN leverage_risk
+2. IF current_ratio_low THEN liquidity_risk
+3. IF interest_coverage_low THEN solvency_risk
+4. IF leverage_risk AND liquidity_risk THEN high_risk_company
+5. IF solvency_risk THEN high_risk_company
+6. IF high_risk_company THEN flag_for_review
+
+## Agno Agent Architecture
+- DataAgent — fetches ratios and real-time price via tools
+- AnalysisAgent — runs CSP constraint checks via tools
+- ComplianceAgent — runs KB compliance rules via tools
+- FinancialAnalysisTeam — coordinator, injects CSP verdict before LLM responds
+- Tools: get_financial_ratios_tool, check_constraints_tool, check_compliance_tool, detect_anomalies_tool, get_realtime_price_tool
+
+## Two-Ticker Comparison Mode
+Triggered by: vs, versus, compare, between, which is better, or, and (with two tickers)
+- Detects second ticker using _detect_second_ticker()
+- Fetches both tickers live
+- Renders side-by-side Live Market Data panels
+- Shows separate HOLD/AVOID banners per ticker
+- Text response formatting still rough — known limitation
+
+## Known Issues / Future Work
+- Two-ticker chat comparison: live data panels work, text formatting messy
+- llama3.2 tool calling unreliable — workaround: pre-fetch + inject
+- Benchmark not run at full scale (50-100 scenarios)
+- Earnings call sentiment (nomic-embed-text) not implemented
+- Transfer pricing component not implemented
+
+## How to Run
+```bash
+conda activate spring_2026
+pip install -r requirements.txt
+ollama serve && ollama pull llama3.2
+streamlit run app.py        # web app
+python chat.py              # terminal chatbot
+python run_demo.py          # classical demo
+pytest -v                   # 22 tests
+```
+
+## AI Tool Disclosure
+Built with Claude Code as coding assistant. Lucky Upadhyay designed all architecture, specified all constraints, made all design decisions. Claude Code translated specs to Python and generated test scaffolding.

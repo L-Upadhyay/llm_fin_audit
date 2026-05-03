@@ -263,6 +263,13 @@ class FinancialCSP:
                     lambda a: a["debt_to_equity"] in ("warning", "critical"),
                     "debt_to_equity > 2.0 -> warning or critical",
                 ))
+            elif de > 1.0:
+                # Moderately leveraged — flag as warning but not critical.
+                self.add_constraint(Constraint(
+                    ["debt_to_equity"],
+                    lambda a: a["debt_to_equity"] in ("warning", "critical"),
+                    "debt_to_equity 1.0-2.0 -> warning",
+                ))
 
         # --- Current ratio ----------------------------------------------
         cr = ratios_dict.get("current_ratio")
@@ -274,6 +281,13 @@ class FinancialCSP:
                     ["current_ratio"],
                     lambda a: a["current_ratio"] == "critical",
                     "current_ratio < 1.0 -> critical",
+                ))
+            elif cr < 1.5:
+                # Thin short-term cushion -> warning.
+                self.add_constraint(Constraint(
+                    ["current_ratio"],
+                    lambda a: a["current_ratio"] in ("warning", "critical"),
+                    "current_ratio 1.0-1.5 -> warning",
                 ))
 
         # --- Interest coverage ------------------------------------------
@@ -287,6 +301,13 @@ class FinancialCSP:
                     ["interest_coverage_ratio"],
                     lambda a: a["interest_coverage_ratio"] == "critical",
                     "interest_coverage_ratio < 1.5 -> critical",
+                ))
+            elif ic < 3.0:
+                # Earnings cover interest but with limited headroom -> warning.
+                self.add_constraint(Constraint(
+                    ["interest_coverage_ratio"],
+                    lambda a: a["interest_coverage_ratio"] in ("warning", "critical"),
+                    "interest_coverage_ratio 1.5-3.0 -> warning",
                 ))
 
         # --- P/E ratio --------------------------------------------------
