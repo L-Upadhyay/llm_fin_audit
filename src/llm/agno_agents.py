@@ -72,6 +72,14 @@ _TICKER_STOPWORDS = {
     "VERY", "MUCH", "EVERY", "OTHER", "SAME", "THAN", "THEN", "HERE",
     "THERE", "NOW", "TODAY", "WEEK", "MONTH", "YEAR", "STOCK", "SHARE",
     "PRICE", "VALUE", "WORTH", "RATIO",
+    # Common pronouns / determiners that hit the regex after upper()-ing
+    # the question (e.g. "Is this company..." -> "IS THIS COMPANY...").
+    "THIS", "THAT", "THESE", "THOSE", "ITS", "HIS", "HER", "HIM",
+    "OUR", "OUT", "OFF", "DUE", "OWN", "ALL", "ANY", "ONE", "TWO",
+    "TEN", "SIX", "FEW", "TOO", "TIE",
+    # Auxiliary / state verbs
+    "GET", "GOT", "PUT", "HAS", "HAD", "WAY", "USE", "SEE", "LET",
+    "MAY", "OWN", "RUN", "TRY", "WHY", "YET",
     # Question words
     "WHAT", "HOW", "WHY", "WHO", "WHEN", "WHERE", "WHICH",
     # Comparison / trading verbs
@@ -95,8 +103,9 @@ _TICKER_RE = re.compile(r"\b[A-Z]{2,5}\b")
 # mode. This prevents "Tell me about AAPL" from being misread as a
 # comparison just because "TELL" or "ABOUT" matches the ticker regex.
 _COMPARISON_SIGNALS = re.compile(
-    r"\b(vs|versus|compare[d]?|compared\s+to|compared\s+with|"
-    r"between|which\s+is|or|and)\b",
+    r"\b(vs|versus|compare[d]?|compared\s+to|compared\s+with|comparison|"
+    r"between|which\s+is|or|and|than|better|worse|stronger|weaker|"
+    r"outperform[s]?|outperforming|differ[s]?|different)\b",
     re.IGNORECASE,
 )
 
