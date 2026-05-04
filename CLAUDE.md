@@ -52,6 +52,10 @@ run_agent.py              — Terminal agent demo
 - Always run pytest after any change
 - Must maintain 22 tests passing
 - Never break existing tests to add new features
+- 17 tests run fully offline (CSP, KB, anomaly, comparator, agent construction, stance/violation helpers)
+- 5 tests need yfinance network access — marked @pytest.mark.network
+- Offline run: pytest -v -m "not network" → 17 tests
+- Full run:    pytest -v → 22 tests, requires internet
 
 ### Git
 - Commit after every working feature
@@ -81,13 +85,21 @@ current_price, open, day_high, day_low, volume, fifty_two_week_high, fifty_two_w
 - gross_margin: healthy > 0.20, warning 0-0.20, critical < 0
 - net_profit_margin: healthy > 0.05, warning 0-0.05, critical < 0
 
-## KB Rules (6 rules)
-1. IF debt_to_equity_high THEN leverage_risk
-2. IF current_ratio_low THEN liquidity_risk
-3. IF interest_coverage_low THEN solvency_risk
-4. IF leverage_risk AND liquidity_risk THEN high_risk_company
-5. IF solvency_risk THEN high_risk_company
-6. IF high_risk_company THEN flag_for_review
+## KB Rules (6 Horn clauses, two inference layers)
+Layer 1 — ratio symptoms fire per-axis risks:
+1. IF debt_to_equity_high      THEN leverage_risk
+2. IF current_ratio_low        THEN liquidity_risk
+3. IF interest_coverage_low    THEN solvency_risk
+
+Layer 2 — per-axis risks chain into the review flag:
+4. IF leverage_risk AND liquidity_risk  THEN high_risk_company
+5. IF solvency_risk                     THEN high_risk_company
+6. IF high_risk_company                 THEN flag_for_review
+
+Verdict mapping:
+- flag_for_review derived         → FAIL
+- any rule fired (no flag)        → WARNING
+- no rules fired                  → PASS
 
 ## Agno Agent Architecture
 - DataAgent — fetches ratios and real-time price via tools
@@ -107,19 +119,21 @@ Triggered by: vs, versus, compare, between, which is better, or, and (with two t
 ## Known Issues / Future Work
 - Two-ticker chat comparison: live data panels work, text formatting messy
 - llama3.2 tool calling unreliable — workaround: pre-fetch + inject
-- Benchmark not run at full scale (50-100 scenarios)
-- Earnings call sentiment (nomic-embed-text) not implemented
-- Transfer pricing component not implemented
+- Benchmark harness functional but full 50-100 scenario sweep not run (time constraint)
+- Earnings call sentiment (nomic-embed-text) not implemented (descoped per Kalathur Apr 27 guidance)
+- Transfer pricing component not implemented (descoped per Kalathur Apr 27 guidance)
 
 ## How to Run
 ```bash
 conda activate spring_2026
 pip install -r requirements.txt
 ollama serve && ollama pull llama3.2
-streamlit run app.py        # web app
-python chat.py              # terminal chatbot
-python run_demo.py          # classical demo
-pytest -v                   # 22 tests
+streamlit run app.py                # web app (recommended demo surface)
+python chat.py                      # terminal chatbot
+python run_demo.py                  # classical demo, no Ollama needed
+pytest -v -m "not network"          # 17 offline tests
+pytest -v                           # 22 tests, needs internet
+python -m src.evaluation.benchmark  # AAPL + MSFT 3-condition benchmark
 ```
 
 ## AI Tool Disclosure

@@ -4,7 +4,12 @@ Tests for the benchmark harness.
 We only test the classical condition here — the LLM and hybrid conditions
 require a running Ollama instance, which is out of scope for an automated
 test suite.
+
+`test_run_classical_only_aapl` reaches the live yfinance API and is
+marked `network`. The other two tests are pure-logic and fully offline.
 """
+
+import pytest
 
 from src.evaluation.benchmark import (
     _detect_violations,
@@ -13,6 +18,7 @@ from src.evaluation.benchmark import (
 )
 
 
+@pytest.mark.network
 def test_run_classical_only_aapl():
     result = run_classical_only("AAPL")
 

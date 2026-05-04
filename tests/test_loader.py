@@ -1,4 +1,12 @@
-"""Smoke test for the financial data loader."""
+"""Smoke tests for the financial data loader.
+
+All tests in this module hit the live yfinance API and are marked
+`network`. To skip them on a machine without internet access:
+
+    pytest -v -m "not network"
+"""
+
+import pytest
 
 from src.data.loader import (
     get_earnings_history,
@@ -7,6 +15,7 @@ from src.data.loader import (
 )
 
 
+@pytest.mark.network
 def test_get_financial_ratios_aapl():
     ratios = get_financial_ratios("AAPL")
     print("\nFinancial ratios for AAPL:")
@@ -19,6 +28,7 @@ def test_get_financial_ratios_aapl():
     assert "interest_coverage_ratio" in ratios
 
 
+@pytest.mark.network
 def test_get_earnings_history_aapl():
     earnings = get_earnings_history("AAPL")
     print("\nEarnings history for AAPL:")
@@ -29,6 +39,7 @@ def test_get_earnings_history_aapl():
     assert "quarterly_eps" in earnings
 
 
+@pytest.mark.network
 def test_get_realtime_price_aapl():
     quote = get_realtime_price("AAPL")
     print("\nRealtime quote for AAPL:")
