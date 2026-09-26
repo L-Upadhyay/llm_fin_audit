@@ -176,13 +176,15 @@ VERDICT_ALIASES = {
     "INSUFFICIENT_DATA": "INSUFFICIENT_DATA",
 }
 _VERDICT_RE = re.compile(r"\b(PASS|WARNING|FAIL|HOLD|WATCH|AVOID|INSUFFICIENT_DATA)\b")
+# Annotations the verifier itself inserts; never re-read them as claims.
+CORRECTION_MARKER_RE = re.compile(r"\[(?:corrected from|unverified:)[^\]]*\]")
 _COMPLIANCE_RE = re.compile(r"complian|knowledge\s+base|\bKB\b", re.IGNORECASE)
 _CSP_RE = re.compile(r"\bCSP\b|constraint|overall|recommendation", re.IGNORECASE)
 
 
 @dataclass
 class Claim:
-    kind: str                 # "value" | "comparison" | "verdict"
+    kind: str                 # "value" | "comparison" | "verdict" | "status"
     metric: str               # metric key, or "verdict"
     ticker: str
     start: int                # span of the number / label in the text
@@ -303,8 +305,14 @@ def extract_claims(text, tickers, primary):
     def in_table(pos):
         return any(a <= pos < b for a, b in table_spans)
 
+    marker_spans = [(mk.start(), mk.end()) for mk in CORRECTION_MARKER_RE.finditer(text)]
+
+    def in_marker(pos):
+        return any(a <= pos < b for a, b in marker_spans)
+
     mentions = _ticker_positions(text, tickers)
-    alias_matches = [m for m in _ALIAS_RE.finditer(text) if not in_table(m.start())]
+    alias_matches = [m for m in _ALIAS_RE.finditer(text)
+                     if not in_table(m.start()) and not in_marker(m.start())]
 
     for idx, m in enumerate(alias_matches):
         spec = _metric_for_match(m)
@@ -339,6 +347,7 @@ def extract_claims(text, tickers, primary):
                             break
                     cursor = nl
 
+        nums = [x for x in nums if not in_marker(x.start)]
         if not nums:
             continue
         n = nums[0]
@@ -369,15 +378,23 @@ def extract_claims(text, tickers, primary):
     claims = unique
 
     for m in _VERDICT_RE.finditer(text):
-        # Which verdict is this label about? Whichever keyword appears
-        # closest before it in the same sentence: "compliance verdict of
-        # WARNING and a CSP verdict of FAIL" has one of each.
+        if in_marker(m.start()):
+            continue
+        # Which verdict is this label about? Whichever reference appears
+        # closest before it in the same sentence or line:
+        #   "compliance verdict of WARNING and a CSP verdict of FAIL"
+        #   "* Interest coverage ratio: 16.62 (PASS)"   <- that ratio's band
         s_start, _ = _sentence_bounds(text, m.start())
         prefix = text[s_start:m.start()]
-        last_kb = max((k.end() for k in _COMPLIANCE_RE.finditer(prefix)), default=-1)
-        last_csp = max((k.end() for k in _CSP_RE.finditer(prefix)), default=-1)
-        metric = "compliance_verdict" if last_kb > last_csp else "verdict"
-        claims.append(Claim("verdict", metric, _ticker_at(m.start(), mentions, primary),
+        refs = [(k.end(), "compliance_verdict") for k in _COMPLIANCE_RE.finditer(prefix)]
+        refs += [(k.end(), "verdict") for k in _CSP_RE.finditer(prefix)]
+        for a in _ALIAS_RE.finditer(prefix):
+            spec = _metric_for_match(a)
+            if spec.source == "ratios":
+                refs.append((a.end(), spec.key))
+        _, metric = max(refs, default=(-1, "verdict"))
+        kind = "status" if metric not in ("verdict", "compliance_verdict") else "verdict"
+        claims.append(Claim(kind, metric, _ticker_at(m.start(), mentions, primary),
                             m.start(), m.end(), m.group(0),
                             verdict=VERDICT_ALIASES[m.group(0)]))
 
@@ -388,4 +405,7 @@ def extract_claims(text, tickers, primary):
 def untracked_numbers(text, claims):
     """Numbers in `text` not attached to any claim — a coverage signal."""
     used = {(c.start, c.end) for c in claims}
-    return [n for n in parse_numbers(text) if (n.start, n.end) not in used]
+    markers = [(m.start(), m.end()) for m in CORRECTION_MARKER_RE.finditer(text)]
+    return [n for n in parse_numbers(text)
+            if (n.start, n.end) not in used
+            and not any(a <= n.start < b for a, b in markers)]

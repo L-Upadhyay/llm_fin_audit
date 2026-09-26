@@ -144,6 +144,7 @@ class AuditPipeline:
         )
 
         answer = self._ask(user)
+        first_answer = answer
         report = verify_text(answer, facts, ticker)
         first_summary = report.summary()
         retries = 0
@@ -158,6 +159,7 @@ class AuditPipeline:
             report = verify_text(answer, facts, ticker)
             retries += 1
 
+        uncorrected_answer = answer
         corrections = []
         if self.verify and self.correct and report.contradicted:
             answer, corrections = apply_corrections(answer, report)
@@ -170,6 +172,9 @@ class AuditPipeline:
                 "retries": retries,
                 "corrections": corrections,
                 "claims": _claim_rows(report),
+                # Drafts kept for auditing and re-scoring in evaluation.
+                "first_answer": first_answer,
+                "uncorrected_answer": uncorrected_answer,
             }
 
         return self._compose(ticker, question, tickers, facts, answer, verification)

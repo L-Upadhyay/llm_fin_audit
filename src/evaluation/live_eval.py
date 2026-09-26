@@ -21,8 +21,10 @@ architecture, not data drift. Raw answers go to results/live_eval_raw.jsonl
 Caveats
 - The verifier only scores claims it can extract. Numbers in phrasings it
   misses count as "untracked", which is reported per condition.
-- "final" contradictions are zero by construction for detected claims; the
-  meaningful pipeline numbers are the first-attempt and after-rewrite rates.
+- The delivered text is re-verified from the stored answer. Its error rate
+  is near zero by construction (the same verifier found and corrected the
+  errors), so the informative pipeline numbers are the first-attempt and
+  after-rewrite rates, plus the verifier's recall on injected errors.
 """
 
 import argparse
@@ -148,7 +150,8 @@ def run(provider_spec, tickers, raw_path):
                             row["first_attempt"] = v["first_attempt"]
                             row["retries"] = v["retries"]
                             row["corrections"] = v["corrections"]
-                            row["pre_correction"] = _pre_correction(v)
+                            row["first_answer"] = v["first_answer"]
+                            row["uncorrected_answer"] = v["uncorrected_answer"]
                     except Exception as e:  # record and continue
                         row["error"] = f"{type(e).__name__}: {e}"
                     row["seconds"] = round(time.perf_counter() - t0, 2)
@@ -156,15 +159,6 @@ def run(provider_spec, tickers, raw_path):
                     out.flush()
                     status = row.get("error") or row["score"]
                     print(f"{condition:9} {ticker:5} {row['seconds']:6.1f}s {status}", flush=True)
-
-
-def _pre_correction(v):
-    """Final-stage counts as they were before in-place corrections."""
-    s = dict(v["final"])
-    n = len(v["corrections"])
-    s["contradicted"] += n
-    s["supported"] -= 0  # corrections don't change supported counts
-    return s
 
 
 # ---------------------------------------------------------------------- #
@@ -205,8 +199,22 @@ def _stage(rows, key):
 
 
 def summarize(raw_path, provider_spec):
+    facts = load_snapshot()["facts"]
     with open(raw_path) as f:
         rows = [r for r in map(json.loads, f) if r["provider"] == provider_spec]
+    # Re-score every stored text with the current verifier so all
+    # conditions and stages are judged by the same rules.
+    for r in rows:
+        if "answer" not in r:
+            continue
+        if r["condition"] == "pipeline":
+            r["first"] = score(r["first_answer"], facts, r["ticker"])
+            r["rewritten"] = score(r["uncorrected_answer"], facts, r["ticker"])
+            # The delivered text (after in-place corrections) is re-verified
+            # rather than assumed clean.
+            r["delivered"] = score(r["answer"], facts, r["ticker"])
+        else:
+            r["score"] = score(r["answer"], facts, r["ticker"])
     out = {"provider": provider_spec, "conditions": {}}
     for cond in ("llm_only", "team", "pipeline"):
         rs = [r for r in rows if r["condition"] == cond]
@@ -218,12 +226,13 @@ def summarize(raw_path, provider_spec):
             "runs": len(rs),
             "errors": len(rs) - len(ok),
             "median_seconds": statistics.median(latency) if latency else None,
-            "verdict_contradictions": sum(r["score"].get("verdict_contradictions", 0) for r in ok),
+            "verdict_contradictions": sum(
+                r.get("delivered", r.get("score", {})).get("verdict_contradictions", 0) for r in ok),
         }
         if cond == "pipeline":
-            out["conditions"]["pipeline_first_attempt"] = {**base, **_stage(ok, "first_attempt")}
-            out["conditions"]["pipeline_after_rewrite"] = {**base, **_stage(ok, "pre_correction")}
-            out["conditions"]["pipeline_final"] = {**base, **_stage(ok, "score")}
+            out["conditions"]["pipeline_first_attempt"] = {**base, **_stage(ok, "first")}
+            out["conditions"]["pipeline_after_rewrite"] = {**base, **_stage(ok, "rewritten")}
+            out["conditions"]["pipeline_final"] = {**base, **_stage(ok, "delivered")}
             out["conditions"]["pipeline_final"]["rewrites"] = sum(r["retries"] for r in ok)
             out["conditions"]["pipeline_final"]["corrections"] = sum(len(r["corrections"]) for r in ok)
         else:
@@ -237,7 +246,7 @@ def to_markdown(s):
         "team": "Agent team (tools, unverified)",
         "pipeline_first_attempt": "Pipeline — first attempt",
         "pipeline_after_rewrite": "Pipeline — after 1 rewrite",
-        "pipeline_final": "Pipeline — final (after correction)",
+        "pipeline_final": "Pipeline — delivered (after correction, re-verified)",
     }
 
     def pct(v):
@@ -269,11 +278,14 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__.split("\n")[1])
     parser.add_argument("--provider", default="ollama:llama3.2")
     parser.add_argument("--tickers", nargs="*")
+    parser.add_argument("--summarize-only", action="store_true",
+                        help="re-score results/live_eval_raw.jsonl without calling the model")
     args = parser.parse_args()
 
     tickers = args.tickers or sorted(load_snapshot()["facts"])
     raw_path = os.path.join(RESULTS_DIR, "live_eval_raw.jsonl")
-    run(args.provider, tickers, raw_path)
+    if not args.summarize_only:
+        run(args.provider, tickers, raw_path)
 
     summary = summarize(raw_path, args.provider)
     slug = args.provider.replace(":", "_").replace("/", "_")

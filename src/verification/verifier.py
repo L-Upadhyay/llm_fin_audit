@@ -16,8 +16,12 @@ Statuses:
 
 from dataclasses import dataclass
 
+from src.classical.thresholds import CRITICAL, HEALTHY, WARNING, classify
 from src.verification.claims import METRICS_BY_KEY, extract_claims, untracked_numbers
 
+
+# Per-ratio status labels ("16.62 (PASS)") map onto the ratio's band.
+_BAND_LABEL = {HEALTHY: "PASS", WARNING: "WARNING", CRITICAL: "FAIL"}
 
 SUPPORTED = "supported"
 CONTRADICTED = "contradicted"
@@ -43,6 +47,8 @@ def _fact_for(claim, facts):
     if claim.kind == "verdict":
         key = "kb_verdict" if claim.metric == "compliance_verdict" else "csp_verdict"
         return ticker_facts.get(key)
+    if claim.kind == "status":
+        return _BAND_LABEL.get(classify(claim.metric, (ticker_facts.get("ratios") or {}).get(claim.metric)))
     spec = METRICS_BY_KEY[claim.metric]
     return (ticker_facts.get(spec.source) or {}).get(claim.metric)
 
@@ -105,7 +111,7 @@ def check_claim(claim, facts):
     if actual is None:
         return CheckedClaim(claim, UNVERIFIABLE)
 
-    if claim.kind == "verdict":
+    if claim.kind in ("verdict", "status"):
         ok = claim.verdict == actual
         return CheckedClaim(claim, SUPPORTED if ok else CONTRADICTED, actual, actual)
 
@@ -159,6 +165,7 @@ class VerificationReport:
             cl = c.claim
             label = ("compliance verdict" if cl.metric == "compliance_verdict"
                      else "verdict" if cl.kind == "verdict"
+                     else f"{METRICS_BY_KEY[cl.metric].label} status" if cl.kind == "status"
                      else METRICS_BY_KEY[cl.metric].label)
             if cl.kind == "comparison":
                 word = "below" if cl.comparator == "lt" else "above"

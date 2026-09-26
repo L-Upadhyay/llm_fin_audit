@@ -202,6 +202,33 @@ def test_nearest_keyword_decides_which_verdict():
     ]
 
 
+def test_per_ratio_labels_check_that_ratios_band():
+    # TSLA-style bullets label each ratio; they must be checked against the
+    # ratio's own band, not the company's overall FAIL verdict.
+    facts = {"TSLA": {"ratios": {"current_ratio": 2.16, "interest_coverage_ratio": 16.6,
+                                 "gross_margin": 0.1885},
+                      "realtime": {}, "csp_verdict": "FAIL"}}
+    text = ("* Current ratio: 2.16 (FAIL)\n"
+            "* Interest coverage ratio: 16.62 (PASS)\n"
+            "* Gross margin: 18.85% (WARNING)\n")
+    report = verify_text(text, facts, "TSLA")
+    labels = [(c.claim.metric, c.status) for c in report.checked if c.claim.kind == "status"]
+    assert labels == [
+        ("current_ratio", CONTRADICTED),
+        ("interest_coverage_ratio", SUPPORTED),
+        ("gross_margin", SUPPORTED),
+    ]
+
+
+def test_correction_markers_are_not_reread():
+    text = "AAPL's current ratio is 0.89 [corrected from 1.43] and the CSP verdict is FAIL [corrected from PASS]."
+    report = verify_text(text, {"AAPL": FACTS["AAPL"]}, "AAPL")
+    assert [(c.claim.metric, c.status) for c in report.checked] == [
+        ("current_ratio", SUPPORTED), ("verdict", SUPPORTED),
+    ]
+    assert report.untracked == []
+
+
 def test_apply_corrections_marks_changes():
     text = "Apple's current ratio is 1.43 and the D/E ratio is 1.34."
     report = verify_text(text, {"AAPL": FACTS["AAPL"]}, "AAPL")
