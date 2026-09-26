@@ -62,7 +62,7 @@ def prompt_view(facts):
     def rnd(v):
         return round(v, 4) if isinstance(v, float) else v
 
-    return {
+    view = {
         "ticker": facts["ticker"],
         "csp_verdict": facts["csp_verdict"],
         "compliance_verdict": facts["kb_verdict"],
@@ -70,6 +70,11 @@ def prompt_view(facts):
         "ratios": {k: rnd(v) for k, v in facts["ratios"].items()},
         "live_quote": {k: rnd(v) for k, v in facts["realtime"].items()},
         "earnings_anomalies": facts["anomaly_summary"],
-        "missing_required_ratios": facts["missing_required_ratios"],
-        "data_quality_issues": facts["data_quality_issues"],
     }
+    # Only include caveats that exist; an empty list invites the model to
+    # write "caveat: none" filler.
+    if facts["missing_required_ratios"]:
+        view["missing_required_ratios"] = facts["missing_required_ratios"]
+    if facts["data_quality_issues"]:
+        view["data_quality_issues"] = facts["data_quality_issues"]
+    return view

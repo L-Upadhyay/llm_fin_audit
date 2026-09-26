@@ -45,7 +45,7 @@ Rules:
 - roe, gross_margin and net_profit_margin are fractions: 0.2715 means 27.15%.
 - If a value is null, say it is unavailable. Do not estimate it.
 - csp_verdict is the official verdict for each ticker. Do not contradict it and do not invent your own buy/sell recommendation.
-- If data_quality_issues is not empty, mention the caveat.
+- If data_quality_issues or missing_required_ratios are present, mention them as caveats.
 - Name the ticker symbol next to every number you state, especially when two tickers are compared.
 - Be concise: markdown, under 180 words.
 
@@ -79,14 +79,18 @@ def _parse_answer(raw):
 
 def _collapse_repeats(text):
     """Drop exact-duplicate sentences — a safety net for degenerate loops."""
+    # Split on sentence ends and line breaks, keeping the separators so
+    # markdown survives. Very short lines ("---", "* N/A") may repeat.
+    parts = re.split(r"((?<=[.!?])[ \t]+|\n+)", text)
     seen, kept = set(), []
-    for sentence in re.split(r"(?<=[.!?])\s+", text):
+    for i in range(0, len(parts), 2):
+        sentence, sep = parts[i], parts[i + 1] if i + 1 < len(parts) else ""
         key = " ".join(sentence.lower().split())
-        if key and key in seen:
+        if len(key) >= 12 and key in seen:
             continue
         seen.add(key)
-        kept.append(sentence)
-    return " ".join(kept).strip()
+        kept.append(sentence + sep)
+    return "".join(kept).strip()
 
 
 def _claim_rows(report):

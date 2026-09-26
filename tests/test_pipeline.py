@@ -96,6 +96,12 @@ def test_repeated_sentences_are_collapsed():
     assert result["answer"] == "AAPL's current ratio is 0.89. Liquidity is tight."
 
 
+def test_collapse_keeps_markdown_line_breaks():
+    text = "Risks:\n* D/E is 1.34.\n* Current ratio is 0.89.\n* D/E is 1.34.\n"
+    result = make(ScriptedProvider(text)).run("AAPL", "Risks?")
+    assert result["answer"] == "Risks:\n* D/E is 1.34.\n* Current ratio is 0.89."
+
+
 def test_get_provider_specs():
     assert isinstance(get_provider("ollama:llama3.2"), OllamaProvider)
     assert isinstance(get_provider("openai:gpt-4o-mini"), OpenAICompatibleProvider)

@@ -43,6 +43,7 @@ from src.formatting import (  # noqa: F401  (several are re-exported for callers
     strip_comparison_block,
     strip_live_quote_block,
 )
+from src.llm.providers import MAX_OUTPUT_TOKENS, REQUEST_TIMEOUT_S
 from src.llm.routing import (  # noqa: F401
     detect_second_ticker as _detect_second_ticker,
     is_price_question as _is_price_question,
@@ -372,7 +373,14 @@ class FinancialAnalysisTeam:
     ]
 
     def __init__(self, model_id: str = MODEL_ID, ticker: str = None):
-        self.model = Ollama(id=model_id)
+        # Same guards as the verified pipeline's providers: cap output and
+        # widen the repeat window so a looping generation can't hang Ollama.
+        self.model = Ollama(
+            id=model_id,
+            timeout=REQUEST_TIMEOUT_S,
+            options={"num_predict": MAX_OUTPUT_TOKENS,
+                     "repeat_penalty": 1.1, "repeat_last_n": 256},
+        )
         self.data_agent = make_data_agent(self.model)
         self.analysis_agent = make_analysis_agent(self.model)
         self.compliance_agent = make_compliance_agent(self.model)
