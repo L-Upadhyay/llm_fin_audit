@@ -20,4 +20,4 @@ rich~=14.3
 
 # Dev
 pytest~=9.0
-ruff>=0.12
+ruff~=0.12.0
