@@ -20,6 +20,7 @@ import streamlit as st
 
 from src.classical.anomaly_detector import detect_earnings_anomaly
 from src.classical.comparator import compare_stocks, rank_stocks
+from src.classical.consistency import check_consistency
 from src.classical.csp_solver import FinancialCSP
 from src.classical.knowledge_base import run_compliance_check
 from src.classical.thresholds import (
@@ -93,6 +94,7 @@ def run_analysis(ticker):
         "anomaly": anomaly,
         "earnings": earnings,
         "realtime": realtime,
+        "consistency": check_consistency(ratios),
     }
 
 
@@ -380,6 +382,8 @@ def render_analysis_tab():
 
     st.markdown("### Financial Ratios")
     render_ratios_table(a["ratios"])
+    for issue in a.get("consistency", []):
+        st.warning(f"**Data consistency:** {issue['issue']}")
 
     # Live market data panel — sits between the ratio table and the chart.
     render_live_market_data(a.get("realtime"))

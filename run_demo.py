@@ -21,6 +21,7 @@ from rich.table import Table
 from rich.text import Text
 
 from src.classical.anomaly_detector import detect_earnings_anomaly
+from src.classical.consistency import check_consistency
 from src.classical.csp_solver import FinancialCSP
 from src.classical.knowledge_base import run_compliance_check
 from src.data.loader import get_earnings_history, get_financial_ratios
@@ -171,6 +172,8 @@ def main():
 
     # --- Run each classical component, panel by panel -----------------
     render_ratios(console, ratios)
+    for issue in check_consistency(ratios):
+        console.print(Panel(issue["issue"], title="[bold]Data consistency[/]", border_style="yellow"))
     render_csp(console, ratios)
     render_compliance(console, ratios)
     render_anomaly(console, earnings)
