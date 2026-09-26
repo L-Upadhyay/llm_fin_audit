@@ -346,7 +346,10 @@ def extract_claims(text, tickers, primary):
         if _REFERENCE_RE.search(between):
             continue
         comp = _COMPARATOR_RE.search(between)
-        ticker = _ticker_at(m.start(), mentions, primary)
+        # Attribute by the last ticker mentioned before the *number*, so
+        # "**Gross Margin**\n* AAPL: 48.7%" goes to AAPL, not to whichever
+        # ticker the previous paragraph ended on.
+        ticker = _ticker_at(n.start, mentions, primary)
         context = text[s_start:max(n.end, min(s_end, len(text)))].strip()
         if comp:
             claims.append(Claim("comparison", spec.key, ticker, n.start, n.end, n.raw,

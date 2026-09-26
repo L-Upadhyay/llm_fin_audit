@@ -49,6 +49,11 @@ def test_rounded_values_are_supported():
     assert statuses("Debt-to-equity stands at 1.34x.") == [("debt_to_equity", SUPPORTED)]
 
 
+def test_half_way_rounding_is_supported():
+    facts = {"TGT": {"ratios": {"quick_ratio": 0.255}, "realtime": {}, "csp_verdict": "FAIL"}}
+    assert statuses("TGT's quick ratio is 0.26.", "TGT", facts) == [("quick_ratio", SUPPORTED)]
+
+
 def test_wrong_values_are_contradicted():
     assert statuses("Apple's current ratio is 1.43.") == [("current_ratio", CONTRADICTED)]
     assert statuses("The D/E ratio of 0.12 is low.") == [("debt_to_equity", CONTRADICTED)]
@@ -71,6 +76,34 @@ def test_comparisons_check_direction():
 def test_comparison_symbols():
     assert statuses("A low current ratio (< 1) signals risk.") == [("current_ratio", SUPPORTED)]
     assert statuses("Current ratio (> 1.5) is comfortable.") == [("current_ratio", CONTRADICTED)]
+
+
+def test_comparison_threshold_is_exact():
+    # "below 1.35" with actual 1.353 is false; the threshold's precision is
+    # not rounding slack.
+    facts = {"MSFT": FACTS["MSFT"]}
+    assert statuses("MSFT's current ratio is below 1.3.", "MSFT", facts) == [
+        ("current_ratio", CONTRADICTED)
+    ]
+    assert statuses("MSFT's current ratio is above 1.", "MSFT", facts) == [
+        ("current_ratio", SUPPORTED)
+    ]
+
+
+def test_fraction_without_percent_sign_is_ambiguous():
+    # ROE 1.4147 = 141%: "1.41" (fraction) and "141.5" (percent) both hold.
+    assert statuses("Return on equity is 1.41.") == [("roe", SUPPORTED)]
+    assert statuses("Return on equity is 141.5.") == [("roe", SUPPORTED)]
+    assert statuses("Return on equity is 1.41%.") == [("roe", CONTRADICTED)]
+
+
+def test_heading_attribution_uses_ticker_next_to_the_number():
+    facts = {"AAPL": FACTS["AAPL"], "MSFT": FACTS["MSFT"]}
+    text = "MSFT has a current ratio of 1.35.\n**Gross Margin**\n* AAPL: 47.9%\n"
+    report = verify_text(text, facts, "MSFT")
+    assert [(c.claim.ticker, c.status) for c in report.checked] == [
+        ("MSFT", SUPPORTED), ("AAPL", SUPPORTED),
+    ]
 
 
 def test_benchmarks_are_not_claims():

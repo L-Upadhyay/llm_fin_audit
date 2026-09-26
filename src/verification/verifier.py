@@ -47,29 +47,33 @@ def _fact_for(claim, facts):
     return (ticker_facts.get(spec.source) or {}).get(claim.metric)
 
 
-def _comparable(claim, actual):
+def _readings(claim, actual):
     """
-    Express the fact in the same units the claim was written in.
+    The fact expressed in each unit the claim could plausibly be written in.
 
-    Returns (stated, actual_in_claim_units, tolerance).
+    A fraction metric written without "%" is ambiguous: "ROE of 1.73" may
+    mean 1.73 (173%) or 1.73%. Both readings are allowed; "%" pins it down.
     """
     spec = METRICS_BY_KEY[claim.metric]
     n = claim.number
-    stated = n.value
-    a = actual
-
     if spec.kind == "fraction":
-        # Stored 0.2715; "27.15%" or "27.15" -> percent units, "0.27" -> fraction.
-        if n.is_percent or abs(stated) > 1.5:
-            a = actual * 100
-    elif spec.kind == "multiple" and n.is_percent:
+        return [actual * 100] if n.is_percent else [actual, actual * 100]
+    if spec.kind == "multiple" and n.is_percent:
         # "D/E of 134%" is a legitimate way to write 1.34.
-        a = actual * 100
+        return [actual * 100]
     # "percent" (dividend yield) and "currency" compare as written.
+    return [actual]
 
-    rounding = 0.5 * 10 ** (-n.decimals) * n.scale
-    tol = max(rounding, abs(a) * REL_TOLERANCE)
-    return stated, a, tol
+
+def _tolerance(claim, a):
+    n = claim.number
+    rel = abs(a) * REL_TOLERANCE
+    if claim.kind == "comparison":
+        # "below 2" names an exact threshold; the stated precision is not
+        # rounding slack.
+        return rel
+    # Epsilon: 0.255 written as "0.26" differs by 0.0050000000000000044.
+    return max(0.5 * 10 ** (-n.decimals) * n.scale, rel) + 1e-9
 
 
 def _format_like(claim, actual):
@@ -102,11 +106,16 @@ def check_claim(claim, facts):
         ok = claim.verdict == actual
         return CheckedClaim(claim, SUPPORTED if ok else CONTRADICTED, actual, actual)
 
-    stated, a, tol = _comparable(claim, actual)
-    if claim.kind == "comparison":
-        ok = a < stated + tol if claim.comparator == "lt" else a > stated - tol
-    else:
-        ok = abs(stated - a) <= tol
+    stated = claim.number.value
+    ok = False
+    for a in _readings(claim, actual):
+        tol = _tolerance(claim, a)
+        if claim.kind == "comparison":
+            ok = a < stated + tol if claim.comparator == "lt" else a > stated - tol
+        else:
+            ok = abs(stated - a) <= tol
+        if ok:
+            break
     return CheckedClaim(claim, SUPPORTED if ok else CONTRADICTED, actual,
                         _format_like(claim, actual))
 
