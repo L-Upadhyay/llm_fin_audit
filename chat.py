@@ -20,6 +20,7 @@ Usage:
     python chat.py
 """
 
+import re
 import sys
 
 from rich.columns import Columns
@@ -99,16 +100,34 @@ def strip_comparison_block(text):
     return ""
 
 
+_AGENT_PREFIXES = (
+    "dataagent:", "analysisagent:", "complianceagent:",
+    "data agent:", "analysis agent:", "compliance agent:",
+    "data_agent:", "analysis_agent:", "compliance_agent:",
+)
+
+# Matches "DataAgent's response:", "AAPL's response:", "NVDA's response:",
+# etc. — internal coordination labels we never want to surface.
+_RESPONSE_LABEL_RE = re.compile(r"^[A-Za-z][\w\-]{0,9}'s\s+response:", re.IGNORECASE)
+
+
 def _clean_response(text):
     """
-    Strip out raw tool-call JSON that occasionally leaks through Agno's
-    team coordinator into the displayed answer.
+    Strip out raw tool-call JSON and internal coordination noise from
+    Agno's team coordinator before displaying the answer.
+
+    Removed:
+      - tool-call JSON like {"name": "...", "parameters": {...}}
+      - lines containing 'delegate' (any form, case-insensitive)
+      - lines starting with an agent label like 'DataAgent:'
+      - lines starting with "<X>'s response:" labels (DataAgent's, AAPL's, ...)
     """
     if not text:
         return text
     cleaned = []
     for line in text.split("\n"):
         stripped = line.strip()
+        low = stripped.lower()
         if "delegate_task_to_member" in line:
             continue
         if (
@@ -116,6 +135,12 @@ def _clean_response(text):
             and '"name":' in stripped
             and '"parameters":' in stripped
         ):
+            continue
+        if "delegate" in low:
+            continue
+        if any(low.startswith(p) for p in _AGENT_PREFIXES):
+            continue
+        if _RESPONSE_LABEL_RE.match(stripped):
             continue
         cleaned.append(line)
     return "\n".join(cleaned).strip()
