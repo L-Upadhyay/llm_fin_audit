@@ -35,6 +35,15 @@ from src.data.loader import (
     get_financial_ratios,
     get_realtime_price,
 )
+from src.formatting import (
+    COMPARISON_HEADER as _COMPARISON_HEADER,
+    LIVE_BLOCK_HEADER as _LIVE_BLOCK_HEADER,
+    fmt_market_cap,
+    fmt_price,
+    fmt_volume,
+    strip_comparison_block,  # noqa: F401  (re-exported for callers)
+    strip_live_quote_block,  # noqa: F401  (re-exported for callers)
+)
 
 
 # Keywords that mark a question as needing live market data. Used both for
@@ -144,9 +153,6 @@ def _detect_second_ticker(question: str, primary: str):
     return None
 
 
-_COMPARISON_HEADER = "**Comparing"
-
-
 def _build_per_ticker_block(ticker: str) -> dict:
     """Fetch ratios + realtime + CSP verdict + recommendation for one ticker."""
     ticker = ticker.upper()
@@ -178,26 +184,13 @@ def _format_comparison_block(comparison: list) -> str:
     ra, rb = a["ratios"], b["ratios"]
     rta, rtb = a["realtime"], b["realtime"]
 
-    def price(v):
-        return "n/a" if v is None else f"${v:,.2f}"
+    price, mc = fmt_price, fmt_market_cap
 
     def ratio(v):
         return "n/a" if v is None else f"{v:.3f}"
 
     def pct(v):
         return "n/a" if v is None else f"{v * 100:.2f}%"
-
-    def mc(v):
-        if v is None:
-            return "n/a"
-        a_ = abs(v)
-        if a_ >= 1e12:
-            return f"${v / 1e12:.2f}T"
-        if a_ >= 1e9:
-            return f"${v / 1e9:.2f}B"
-        if a_ >= 1e6:
-            return f"${v / 1e6:.2f}M"
-        return f"${v:,.0f}"
 
     rows = [
         ("Current Price", price(rta.get("current_price")), price(rtb.get("current_price"))),
@@ -227,45 +220,6 @@ def _format_comparison_block(comparison: list) -> str:
     return "\n".join(lines)
 
 
-def strip_comparison_block(text: str) -> str:
-    """
-    Drop the auto-prepended comparison table from the agent text. Used by
-    UIs that render the comparison panel separately so the markdown copy
-    isn't shown twice.
-    """
-    if not text:
-        return text
-    lines = text.split("\n")
-    if not lines or not lines[0].lstrip().startswith(_COMPARISON_HEADER):
-        return text
-    # The block ends at the first blank line AFTER the table (i.e., we need
-    # to skip the blank line that's intentional inside the block first).
-    seen_table = False
-    for i in range(1, len(lines)):
-        if lines[i].lstrip().startswith("|"):
-            seen_table = True
-        elif seen_table and lines[i].strip() == "":
-            return "\n".join(lines[i + 1:]).lstrip()
-    return ""
-
-
-def _format_market_cap_short(value):
-    """Render market cap as $X.XXT / $X.XXB / $X.XXM, or n/a."""
-    if value is None:
-        return "n/a"
-    abs_v = abs(value)
-    if abs_v >= 1e12:
-        return f"${value / 1e12:.2f}T"
-    if abs_v >= 1e9:
-        return f"${value / 1e9:.2f}B"
-    if abs_v >= 1e6:
-        return f"${value / 1e6:.2f}M"
-    return f"${value:,.0f}"
-
-
-_LIVE_BLOCK_HEADER = "**Live market data for"
-
-
 def _format_live_quote_block(quote: dict) -> str:
     """
     Format a get_realtime_price() result as a markdown block.
@@ -277,11 +231,7 @@ def _format_live_quote_block(quote: dict) -> str:
     if not quote or quote.get("error"):
         return ""
 
-    def price(v):
-        return "n/a" if v is None else f"${v:,.2f}"
-
-    def vol(v):
-        return "n/a" if v is None else f"{int(v):,}"
+    price, vol = fmt_price, fmt_volume
 
     def change(c, p):
         if c is None or p is None:
@@ -303,31 +253,12 @@ def _format_live_quote_block(quote: dict) -> str:
         f"- 52-Week Range: {price(quote.get('fifty_two_week_low'))} – "
         f"{price(quote.get('fifty_two_week_high'))}",
         f"- Volume: {vol(quote.get('volume'))}",
-        f"- Market Cap: {_format_market_cap_short(quote.get('market_cap'))}",
+        f"- Market Cap: {fmt_market_cap(quote.get('market_cap'))}",
         f"- Dividend Yield: {'n/a' if div_yield is None else f'{div_yield:.2f}%'}",
         f"- Beta: {'n/a' if beta is None else f'{beta:.2f}'}",
         f"- Next Earnings: {quote.get('next_earnings_date') or 'n/a'}",
     ]
     return "\n".join(lines)
-
-
-def strip_live_quote_block(text: str) -> str:
-    """
-    Remove the auto-prepended live-market-data block from a team response.
-
-    UIs that render the live quote in a structured panel call this so the
-    same data isn't shown twice (once in the panel, once as markdown).
-    """
-    if not text:
-        return text
-    lines = text.split("\n")
-    if not lines or not lines[0].lstrip().startswith(_LIVE_BLOCK_HEADER):
-        return text
-    # The block ends at the first blank line after the header.
-    for i in range(1, len(lines)):
-        if lines[i].strip() == "":
-            return "\n".join(lines[i + 1:]).lstrip()
-    return ""
 
 
 MODEL_ID = "llama3.2"

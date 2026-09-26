@@ -20,7 +20,6 @@ Usage:
     python chat.py
 """
 
-import re
 import sys
 
 from rich.columns import Columns
@@ -35,6 +34,14 @@ from src.classical.anomaly_detector import detect_earnings_anomaly
 from src.classical.csp_solver import FinancialCSP
 from src.classical.knowledge_base import run_compliance_check
 from src.data.loader import get_earnings_history, get_financial_ratios
+from src.formatting import (
+    clean_agent_response,
+    fmt_market_cap,
+    fmt_price,
+    fmt_volume,
+    strip_comparison_block,
+    strip_live_quote_block,
+)
 from src.llm.agno_agents import FinancialAnalysisTeam
 
 
@@ -65,88 +72,6 @@ SEVERITY_STYLE = {"none": "green", "moderate": "yellow", "severe": "red"}
 def fmt(value):
     """Format a numeric ratio for display, or 'n/a' if missing."""
     return "n/a" if value is None else f"{value:.3f}"
-
-
-_LIVE_BLOCK_HEADER = "**Live market data for"
-_COMPARISON_HEADER = "**Comparing"
-
-
-def strip_live_quote_block(text):
-    """
-    Remove an auto-prepended live-market-data block from agent text so
-    the rich Panel rendering doesn't duplicate the markdown copy.
-    """
-    if not text:
-        return text
-    lines = text.split("\n")
-    if not lines or not lines[0].lstrip().startswith(_LIVE_BLOCK_HEADER):
-        return text
-    for i in range(1, len(lines)):
-        if lines[i].strip() == "":
-            return "\n".join(lines[i + 1:]).lstrip()
-    return ""
-
-
-def strip_comparison_block(text):
-    """Remove an auto-prepended comparison table from the agent text."""
-    if not text:
-        return text
-    lines = text.split("\n")
-    if not lines or not lines[0].lstrip().startswith(_COMPARISON_HEADER):
-        return text
-    seen_table = False
-    for i in range(1, len(lines)):
-        if lines[i].lstrip().startswith("|"):
-            seen_table = True
-        elif seen_table and lines[i].strip() == "":
-            return "\n".join(lines[i + 1:]).lstrip()
-    return ""
-
-
-_AGENT_PREFIXES = (
-    "dataagent:", "analysisagent:", "complianceagent:",
-    "data agent:", "analysis agent:", "compliance agent:",
-    "data_agent:", "analysis_agent:", "compliance_agent:",
-)
-
-# Matches "DataAgent's response:", "AAPL's response:", "NVDA's response:",
-# etc. — internal coordination labels we never want to surface.
-_RESPONSE_LABEL_RE = re.compile(r"^[A-Za-z][\w\-]{0,9}'s\s+response:", re.IGNORECASE)
-
-
-def _clean_response(text):
-    """
-    Strip out raw tool-call JSON and internal coordination noise from
-    Agno's team coordinator before displaying the answer.
-
-    Removed:
-      - tool-call JSON like {"name": "...", "parameters": {...}}
-      - lines containing 'delegate' (any form, case-insensitive)
-      - lines starting with an agent label like 'DataAgent:'
-      - lines starting with "<X>'s response:" labels (DataAgent's, AAPL's, ...)
-    """
-    if not text:
-        return text
-    cleaned = []
-    for line in text.split("\n"):
-        stripped = line.strip()
-        low = stripped.lower()
-        if "delegate_task_to_member" in line:
-            continue
-        if (
-            stripped.startswith("{")
-            and '"name":' in stripped
-            and '"parameters":' in stripped
-        ):
-            continue
-        if "delegate" in low:
-            continue
-        if any(low.startswith(p) for p in _AGENT_PREFIXES):
-            continue
-        if _RESPONSE_LABEL_RE.match(stripped):
-            continue
-        cleaned.append(line)
-    return "\n".join(cleaned).strip()
 
 
 # ---------------------------------------------------------------------- #
@@ -205,27 +130,6 @@ def show_summary(console, ticker, ratios, earnings):
 _REC_BORDER = {"green": "green", "yellow": "yellow", "red": "red"}
 
 
-def _fmt_price(v):
-    return "n/a" if v is None else f"${v:,.2f}"
-
-
-def _fmt_volume(v):
-    return "n/a" if v is None else f"{int(v):,}"
-
-
-def _fmt_market_cap(v):
-    if v is None:
-        return "n/a"
-    a = abs(v)
-    if a >= 1e12:
-        return f"${v / 1e12:.2f}T"
-    if a >= 1e9:
-        return f"${v / 1e9:.2f}B"
-    if a >= 1e6:
-        return f"${v / 1e6:.2f}M"
-    return f"${v:,.0f}"
-
-
 def _fmt_change(c, p):
     """Return (text, rich_color) for the daily price change."""
     if c is None or p is None:
@@ -248,7 +152,7 @@ def _make_live_market_data_panel(realtime):
     )
 
     headline = Text()
-    headline.append(_fmt_price(realtime.get("current_price")), style="bold white")
+    headline.append(fmt_price(realtime.get("current_price")), style="bold white")
     headline.append("   ")
     headline.append(change_text, style=f"bold {change_color}")
 
@@ -258,13 +162,13 @@ def _make_live_market_data_panel(realtime):
     table = Table(show_header=False, box=None, pad_edge=False)
     table.add_column("Metric", style="dim")
     table.add_column("Value")
-    table.add_row("Previous Close", _fmt_price(realtime.get("previous_close")))
+    table.add_row("Previous Close", fmt_price(realtime.get("previous_close")))
     low, high = realtime.get("day_low"), realtime.get("day_high")
-    table.add_row("Today's Range", f"{_fmt_price(low)} – {_fmt_price(high)}")
+    table.add_row("Today's Range", f"{fmt_price(low)} – {fmt_price(high)}")
     yl, yh = realtime.get("fifty_two_week_low"), realtime.get("fifty_two_week_high")
-    table.add_row("52-Week Range", f"{_fmt_price(yl)} – {_fmt_price(yh)}")
-    table.add_row("Volume", _fmt_volume(realtime.get("volume")))
-    table.add_row("Market Cap", _fmt_market_cap(realtime.get("market_cap")))
+    table.add_row("52-Week Range", f"{fmt_price(yl)} – {fmt_price(yh)}")
+    table.add_row("Volume", fmt_volume(realtime.get("volume")))
+    table.add_row("Market Cap", fmt_market_cap(realtime.get("market_cap")))
     table.add_row("Dividend Yield", "n/a" if div is None else f"{div:.2f}%")
     table.add_row("Beta", "n/a" if beta is None else f"{beta:.2f}")
     table.add_row("Next Earnings", realtime.get("next_earnings_date") or "n/a")
@@ -372,7 +276,7 @@ def show_response(console, ticker, result):
     else:
         text = result
 
-    text = _clean_response(text)
+    text = clean_agent_response(text)
     body = Markdown(text or "_(empty response)_")
     console.print(Panel(
         body,

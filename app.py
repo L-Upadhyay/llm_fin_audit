@@ -13,7 +13,6 @@ Run with:
     streamlit run app.py
 """
 
-import re
 
 import matplotlib.pyplot as plt
 import pandas as pd
@@ -35,6 +34,14 @@ from src.data.loader import (
     get_earnings_history,
     get_financial_ratios,
     get_realtime_price,
+)
+from src.formatting import (
+    clean_agent_response,
+    fmt_market_cap,
+    fmt_price,
+    fmt_volume,
+    strip_comparison_block,
+    strip_live_quote_block,
 )
 
 
@@ -118,125 +125,6 @@ def render_severity_box(severity):
         st.info(text)
 
 
-_LIVE_BLOCK_HEADER = "**Live market data for"
-_COMPARISON_HEADER = "**Comparing"
-
-
-def strip_live_quote_block(text):
-    """
-    Remove an auto-prepended live-market-data block from agent text. The
-    chat tab renders the live quote in its own panel, so we drop the
-    duplicate markdown copy before showing the LLM's narrative.
-    """
-    if not text:
-        return text
-    lines = text.split("\n")
-    if not lines or not lines[0].lstrip().startswith(_LIVE_BLOCK_HEADER):
-        return text
-    for i in range(1, len(lines)):
-        if lines[i].strip() == "":
-            return "\n".join(lines[i + 1:]).lstrip()
-    return ""
-
-
-def strip_comparison_block(text):
-    """
-    Remove an auto-prepended comparison table from agent text. The chat
-    tab renders the comparison in its own panel, so we drop the duplicate
-    markdown copy.
-    """
-    if not text:
-        return text
-    lines = text.split("\n")
-    if not lines or not lines[0].lstrip().startswith(_COMPARISON_HEADER):
-        return text
-    seen_table = False
-    for i in range(1, len(lines)):
-        if lines[i].lstrip().startswith("|"):
-            seen_table = True
-        elif seen_table and lines[i].strip() == "":
-            return "\n".join(lines[i + 1:]).lstrip()
-    return ""
-
-
-_AGENT_PREFIXES = (
-    "dataagent:", "analysisagent:", "complianceagent:",
-    "data agent:", "analysis agent:", "compliance agent:",
-    "data_agent:", "analysis_agent:", "compliance_agent:",
-)
-
-# Matches "DataAgent's response:", "AAPL's response:", "NVDA's response:",
-# etc. — internal coordination labels we never want to surface.
-_RESPONSE_LABEL_RE = re.compile(r"^[A-Za-z][\w\-]{0,9}'s\s+response:", re.IGNORECASE)
-
-
-def _clean_response(text):
-    """
-    Strip out raw tool-call JSON and internal coordination noise that
-    occasionally leaks through Agno's team coordinator into the displayed
-    answer.
-
-    Removed:
-      - tool-call JSON like {"name": "...", "parameters": {...}}
-      - lines containing 'delegate' (any form, case-insensitive)
-      - lines starting with an agent label like 'DataAgent:'
-      - lines starting with "<X>'s response:" labels (DataAgent's, AAPL's, ...)
-    """
-    if not text:
-        return text
-    cleaned = []
-    for line in text.split("\n"):
-        stripped = line.strip()
-        low = stripped.lower()
-        if "delegate_task_to_member" in line:
-            continue
-        if (
-            stripped.startswith("{")
-            and '"name":' in stripped
-            and '"parameters":' in stripped
-        ):
-            continue
-        # Any natural-language delegation chatter.
-        if "delegate" in low:
-            continue
-        # Lines prefixed with a member-agent label.
-        if any(low.startswith(p) for p in _AGENT_PREFIXES):
-            continue
-        # Lines like "DataAgent's response:" or "AAPL's response:".
-        if _RESPONSE_LABEL_RE.match(stripped):
-            continue
-        cleaned.append(line)
-    return "\n".join(cleaned).strip()
-
-
-def _format_price(value):
-    """Render a USD price as $1,234.56, or 'n/a' if missing."""
-    if value is None:
-        return "n/a"
-    return f"${value:,.2f}"
-
-
-def _format_volume(value):
-    """Render share volume with thousands separators."""
-    if value is None:
-        return "n/a"
-    return f"{int(value):,}"
-
-
-def _format_market_cap(value):
-    """Render market cap as $X.XXT / $X.XXB / $X.XXM, scaled automatically."""
-    if value is None:
-        return "n/a"
-    abs_v = abs(value)
-    if abs_v >= 1e12:
-        return f"${value / 1e12:.2f}T"
-    if abs_v >= 1e9:
-        return f"${value / 1e9:.2f}B"
-    if abs_v >= 1e6:
-        return f"${value / 1e6:.2f}M"
-    return f"${value:,.0f}"
-
-
 def _format_range(low, high):
     """Format a low–high price range, or 'n/a' if either side is missing."""
     if low is None or high is None:
@@ -255,7 +143,7 @@ def _format_change(change, change_pct):
         return f"▲ +${change:,.2f} (+{change_pct:.2f}%)", "#2ca02c"
     if change < 0:
         return f"▼ -${abs(change):,.2f} ({change_pct:.2f}%)", "#d62728"
-    return f"$0.00 (0.00%)", "#666666"
+    return "$0.00 (0.00%)", "#666666"
 
 
 def _format_dividend_yield(value):
@@ -303,7 +191,7 @@ def render_live_market_data(realtime):
         return
 
     # --- Headline price + delta ---------------------------------------
-    price_text = _format_price(realtime.get("current_price"))
+    price_text = fmt_price(realtime.get("current_price"))
     change_text, change_color = _format_change(
         realtime.get("price_change"),
         realtime.get("price_change_percent"),
@@ -317,13 +205,13 @@ def render_live_market_data(realtime):
 
     # --- Two rows of metrics ------------------------------------------
     row1 = [
-        ("Previous Close", _format_price(realtime.get("previous_close"))),
+        ("Previous Close", fmt_price(realtime.get("previous_close"))),
         ("Today's Range", _format_range(realtime.get("day_low"), realtime.get("day_high"))),
         ("52-Week Range", _format_range(realtime.get("fifty_two_week_low"), realtime.get("fifty_two_week_high"))),
-        ("Volume", _format_volume(realtime.get("volume"))),
+        ("Volume", fmt_volume(realtime.get("volume"))),
     ]
     row2 = [
-        ("Market Cap", _format_market_cap(realtime.get("market_cap"))),
+        ("Market Cap", fmt_market_cap(realtime.get("market_cap"))),
         ("Dividend Yield", _format_dividend_yield(realtime.get("dividend_yield"))),
         ("Beta", _format_beta(realtime.get("beta"))),
         ("Next Earnings", realtime.get("next_earnings_date") or "n/a"),
@@ -985,7 +873,7 @@ def render_chat_tab():
         with st.spinner(f"Thinking about {ticker}... (this may take a minute)"):
             try:
                 result = st.session_state.team.run(ticker, user_input)
-                response = _clean_response(result.get("text", ""))
+                response = clean_agent_response(result.get("text", ""))
                 recommendation = result.get("recommendation")
                 realtime = result.get("realtime")
                 comparison = result.get("comparison")
