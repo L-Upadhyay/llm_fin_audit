@@ -83,8 +83,11 @@ def _format_like(claim, actual):
     decimals = max(n.decimals, 2)
     if spec.kind == "currency":
         if n.scale > 1:
-            suffix = {1e12: "T", 1e9: "B", 1e6: "M", 1e3: "K"}.get(n.scale, "")
-            return f"${actual / n.scale:,.{decimals}f}{suffix}"
+            # Scale by the true value: "$2.62T" for a $2.62B company should
+            # read "$2.62B", not "$0.00T".
+            for scale, suffix in ((1e12, "T"), (1e9, "B"), (1e6, "M"), (1e3, "K")):
+                if abs(actual) >= scale:
+                    return f"${actual / scale:,.{decimals}f}{suffix}"
         return f"${actual:,.{decimals}f}"
     if spec.kind == "fraction":
         if n.is_percent or abs(n.value) > 1.5:

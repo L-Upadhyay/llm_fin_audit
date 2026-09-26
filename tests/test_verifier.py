@@ -118,6 +118,14 @@ def test_currency_with_scale_suffix():
     assert statuses("The current price is $341.07.") == [("current_price", SUPPORTED)]
 
 
+def test_scale_error_correction_uses_true_magnitude():
+    facts = {"AMC": {"ratios": {}, "realtime": {"market_cap": 2.624e9}, "csp_verdict": "FAIL"}}
+    text = "AMC's market cap is $2.62T."
+    report = verify_text(text, facts, "AMC")
+    fixed, _ = apply_corrections(text, report)
+    assert fixed == "AMC's market cap is $2.62B [corrected from $2.62T]."
+
+
 def test_negative_values():
     assert statuses("Interest coverage is -7.9x.", "F") == [("interest_coverage_ratio", SUPPORTED)]
     assert statuses("Interest coverage is 7.9x.", "F") == [("interest_coverage_ratio", CONTRADICTED)]
