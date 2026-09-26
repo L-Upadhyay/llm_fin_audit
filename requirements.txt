@@ -1,9 +1,23 @@
-pandas
-numpy
-matplotlib
-yfinance
-agno
-openai
-ollama
-pytest
-rich
+# Versions tested with Python 3.11. Compatible-release pins (~=) allow
+# patch/minor bug fixes but not breaking major upgrades.
+
+# Data + classical layer
+pandas~=2.3
+numpy~=2.3
+yfinance~=1.3
+
+# LLM layer
+agno~=2.5
+ollama~=0.6
+# Not imported directly: agno.models.ollama imports agno.models.openai,
+# which hard-requires the openai package.
+openai>=1.0
+
+# Interfaces
+streamlit~=1.56
+matplotlib~=3.10
+rich~=14.3
+
+# Dev
+pytest~=9.0
+ruff>=0.12

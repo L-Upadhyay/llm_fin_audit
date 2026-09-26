@@ -301,7 +301,7 @@ def render_ratios_table(ratios):
         for key, label, fmt in _RATIO_DISPLAY
     ]
     df = pd.DataFrame(rows)
-    st.dataframe(df, use_container_width=True, hide_index=True)
+    st.dataframe(df, width="stretch", hide_index=True)
 
 
 def make_ratio_chart(ratios, ticker):
@@ -683,7 +683,7 @@ def render_compare_tab():
         for i, t in enumerate(list(tickers)):
             with cols[i % len(cols)]:
                 st.markdown(f"### {t}")
-                if st.button("Remove", key=f"remove_{t}", use_container_width=True):
+                if st.button("Remove", key=f"remove_{t}", width="stretch"):
                     st.session_state.compare_tickers.remove(t)
                     st.rerun()
     else:
@@ -696,7 +696,7 @@ def render_compare_tab():
             label_visibility="collapsed",
         ).strip().upper()
     with add_col2:
-        if st.button("Add Stock", use_container_width=True):
+        if st.button("Add Stock", width="stretch"):
             if not new_ticker:
                 st.warning("Type a ticker first.")
             elif new_ticker in tickers:
@@ -775,7 +775,7 @@ def render_compare_tab():
         lambda row: [_row_color(row["Health Score (lower = better)"])] * len(row),
         axis=1,
     )
-    st.dataframe(styled, use_container_width=True, hide_index=True)
+    st.dataframe(styled, width="stretch", hide_index=True)
 
     # --- Single-stock deep dive --------------------------------------
     st.markdown("---")
@@ -931,7 +931,7 @@ def main():
     ticker_input = st.sidebar.text_input("Stock Ticker", value="AAPL").strip().upper()
     ticker = ticker_input or "AAPL"
 
-    if st.sidebar.button("Analyze", use_container_width=True):
+    if st.sidebar.button("Analyze", width="stretch"):
         with st.spinner(f"Loading {ticker}..."):
             try:
                 st.session_state.analysis = run_analysis(ticker)
