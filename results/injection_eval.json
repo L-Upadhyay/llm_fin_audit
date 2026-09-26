@@ -2,11 +2,11 @@
   "slots": 1831,
   "injected": 676,
   "clean": 1155,
-  "true_positives": 601,
+  "true_positives": 599,
   "false_positives": 0,
   "spurious_contradictions": 0,
   "precision": 1.0,
-  "recall": 0.8891,
+  "recall": 0.8861,
   "false_positive_rate_clean": 0.0,
   "recall_by_family": {
     "hard": {
@@ -15,7 +15,7 @@
     },
     "standard": {
       "n": 601,
-      "recall": 1.0
+      "recall": 0.9967
     }
   },
   "recall_by_error": {
@@ -29,7 +29,7 @@
     },
     "near_miss": {
       "n": 102,
-      "recall": 0.8922
+      "recall": 0.8725
     },
     "scale": {
       "n": 108,
@@ -71,7 +71,7 @@
     },
     "prose_is": {
       "n": 55,
-      "recall": 1.0
+      "recall": 0.9818
     },
     "prose_of": {
       "n": 89,
@@ -79,7 +79,7 @@
     },
     "table": {
       "n": 183,
-      "recall": 1.0
+      "recall": 0.9945
     },
     "two_ticker": {
       "n": 119,

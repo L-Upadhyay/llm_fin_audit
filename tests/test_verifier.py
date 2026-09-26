@@ -232,6 +232,20 @@ def test_verdict_reference_after_the_label():
         assert report.contradicted == [], text
 
 
+def test_trailing_reference_stays_on_its_line():
+    # From the llama3.2 live eval (AMZN / TGT).
+    facts = {"AAPL": FACTS["AAPL"]}  # csp FAIL, compliance WARNING
+    for text in ("CSP Verdict: FAIL\nCompliance Verdict: WARNING",
+                 "Compliance Verdict: WARNING\nCSP Verdict: FAIL"):
+        assert verify_text(text, facts, "AAPL").contradicted == [], text
+
+
+def test_truncation_is_tolerated():
+    facts = {"SBUX": {"ratios": {"quick_ratio": 0.496}, "realtime": {}, "csp_verdict": "FAIL"}}
+    assert statuses("The quick ratio is 0.49.", "SBUX", facts) == [("quick_ratio", SUPPORTED)]
+    assert statuses("The quick ratio is 0.47.", "SBUX", facts) == [("quick_ratio", CONTRADICTED)]
+
+
 def test_correction_markers_are_not_reread():
     text = "AAPL's current ratio is 0.89 [corrected from 1.43] and the CSP verdict is FAIL [corrected from PASS]."
     report = verify_text(text, {"AAPL": FACTS["AAPL"]}, "AAPL")

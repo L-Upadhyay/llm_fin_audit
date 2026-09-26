@@ -183,9 +183,11 @@ _COMPLIANCE_RE = re.compile(r"complian|knowledge\s+base|\bKB\b", re.IGNORECASE)
 _CSP_RE = re.compile(r"\bcsp(?:_verdict)?\b|constraint|overall|recommendation", re.IGNORECASE)
 # A reference written right after the label: "WARNING (compliance_verdict)",
 # "the 'WARNING' compliance verdict".
+# Same line only: "CSP Verdict: WARNING\nCompliance Verdict: PASS" must not
+# tie WARNING to the next line's "Compliance".
 _TRAILING_REF_RE = re.compile(
-    r"^['\"’)\s]*\(?\s*(?:the\s+)?(?P<kb>complian\w*|knowledge\s+base|kb\b)|"
-    r"^['\"’)\s]*\(?\s*(?:the\s+)?(?P<csp>csp\w*|constraint\w*|overall)",
+    r"^['\"’) \t]*\(?[ \t]*(?:the[ \t]+)?(?P<kb>complian\w*|knowledge[ \t]+base|kb\b)|"
+    r"^['\"’) \t]*\(?[ \t]*(?:the[ \t]+)?(?P<csp>csp\w*|constraint\w*|overall)",
     re.IGNORECASE,
 )
 

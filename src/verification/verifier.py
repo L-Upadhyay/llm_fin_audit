@@ -78,8 +78,9 @@ def _tolerance(claim, a):
         # "below 2" names an exact threshold; the stated precision is not
         # rounding slack.
         return rel
-    # Epsilon: 0.255 written as "0.26" differs by 0.0050000000000000044.
-    return max(0.5 * 10 ** (-n.decimals) * n.scale, rel) + 1e-9
+    # One unit in the last written digit, so both rounding (0.255 -> "0.26")
+    # and truncation (0.496 -> "0.49") pass; epsilon for float noise.
+    return max(10 ** (-n.decimals) * n.scale, rel) + 1e-9
 
 
 def _format_like(claim, actual):
