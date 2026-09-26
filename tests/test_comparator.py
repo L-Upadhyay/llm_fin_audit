@@ -2,6 +2,8 @@
 
 import os
 
+import pytest
+
 from src.classical.comparator import (
     compare_stocks,
     plot_comparison,
@@ -9,6 +11,7 @@ from src.classical.comparator import (
 )
 
 
+@pytest.mark.network
 def test_compare_stocks_shape():
     # One ticker keeps the test fast but still exercises every code path.
     results = compare_stocks(["AAPL"])
