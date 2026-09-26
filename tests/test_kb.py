@@ -67,6 +67,12 @@ def test_kb_basic_operations():
     assert kb.ask("d") is False
 
 
+def test_missing_required_ratios_fail_closed():
+    result = run_compliance_check({})
+    assert result["verdict"] == "INSUFFICIENT_DATA"
+    assert set(result["missing_ratios"]) == {"debt_to_equity", "current_ratio"}
+
+
 if __name__ == "__main__":
     test_healthy_company_no_rules_fire()
     test_single_risk_triggers_warning()

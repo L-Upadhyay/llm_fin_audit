@@ -351,6 +351,12 @@ RECOMMENDATION_BY_VERDICT = {
         "summary": "One or more metrics are critical",
         "color": "red",
     },
+    "INSUFFICIENT_DATA": {
+        "label": "NO VERDICT",
+        "emoji": "❔",
+        "summary": "Required ratios unavailable — cannot assess",
+        "color": "white",
+    },
 }
 
 
@@ -662,12 +668,15 @@ class FinancialAnalysisTeam:
         "If a tool failed, say so explicitly instead of guessing.",
         "ALWAYS end your reply with a markdown section titled "
         "'## Recommendation' on its own line.",
-        "The Recommendation section MUST contain exactly one of these three "
+        "The Recommendation section MUST contain exactly one of these "
         "lines, picked from the CSP verdict the user provides at the bottom "
         "of the prompt — do not invent your own:",
         "  - if CSP verdict is PASS:    '✅ HOLD — Ratios are within healthy ranges'",
         "  - if CSP verdict is WARNING: '⚠️ WATCH — Monitor these metrics closely'",
         "  - if CSP verdict is FAIL:    '🔴 AVOID/REVIEW — One or more metrics are critical'",
+        "  - if CSP verdict is INSUFFICIENT_DATA: '❔ NO VERDICT — Required ratios "
+        "unavailable — cannot assess'. In that case do not describe the company "
+        "as healthy or unhealthy.",
         "Copy that line verbatim, including the emoji and dash. Then add one "
         "short sentence explaining the call in your own words.",
     ]

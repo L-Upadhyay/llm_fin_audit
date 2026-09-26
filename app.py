@@ -23,6 +23,14 @@ from src.classical.anomaly_detector import detect_earnings_anomaly
 from src.classical.comparator import compare_stocks, rank_stocks
 from src.classical.csp_solver import FinancialCSP
 from src.classical.knowledge_base import run_compliance_check
+from src.classical.thresholds import (
+    CRITICAL,
+    HEALTHY,
+    RATIO_THRESHOLDS,
+    WARNING,
+    classify,
+    missing_required,
+)
 from src.data.loader import (
     get_earnings_history,
     get_financial_ratios,
@@ -520,74 +528,69 @@ def render_analysis_tab():
 # Compare-tab metadata and helpers
 # ---------------------------------------------------------------------- #
 
-# Numeric ratio metadata: thresholds + plain-English explanation per ratio.
-# Thresholds align with the rules in src/classical/csp_solver.py so the bar
-# chart colors match the CSP verdict for the same ratio.
+# Numeric ratio metadata: label + plain-English explanation per ratio.
 RATIO_METADATA = {
     "debt_to_equity": {
         "label": "Debt-to-Equity",
         "explanation": "Measures financial leverage. Lower is generally safer.",
-        "ranges_text": "Healthy: below 1.0 • Warning: 1.0–2.0 • Critical: above 2.0",
-        "direction": "lower",  # lower numeric value is healthier
-        "thresholds": {"healthy_max": 1.0, "warning_max": 2.0},
     },
     "current_ratio": {
         "label": "Current Ratio",
         "explanation": "Measures short-term liquidity. Higher is better.",
-        "ranges_text": "Healthy: above 1.5 • Warning: 1.0–1.5 • Critical: below 1.0",
-        "direction": "higher",
-        "thresholds": {"healthy_min": 1.5, "warning_min": 1.0},
     },
     "interest_coverage_ratio": {
         "label": "Interest Coverage",
         "explanation": "Measures ability to pay interest from operating earnings. Higher is better.",
-        "ranges_text": "Healthy: above 3.0 • Warning: 1.5–3.0 • Critical: below 1.5",
-        "direction": "higher",
-        "thresholds": {"healthy_min": 3.0, "warning_min": 1.5},
     },
     "quick_ratio": {
         "label": "Quick Ratio",
         "explanation": "Stricter liquidity measure that excludes inventory. Higher is better.",
-        "ranges_text": "Healthy: above 1.0 • Warning: 0.5–1.0 • Critical: below 0.5",
-        "direction": "higher",
-        "thresholds": {"healthy_min": 1.0, "warning_min": 0.5},
     },
     "pe_ratio": {
         "label": "P/E Ratio",
         "explanation": "Price relative to trailing earnings. Very high values suggest overvaluation.",
-        "ranges_text": "Healthy: below 50 • Warning: 50–100 • Critical: above 100",
-        "direction": "lower",
-        "thresholds": {"healthy_max": 50.0, "warning_max": 100.0},
     },
     "roe": {
         "label": "Return on Equity",
         "explanation": "Profit generated per dollar of shareholder equity. Higher is better.",
-        "ranges_text": "Healthy: above 5% • Warning: 0–5% • Critical: below 0%",
-        "direction": "higher",
-        "thresholds": {"healthy_min": 0.05, "warning_min": 0.0},
     },
     "gross_margin": {
         "label": "Gross Margin",
         "explanation": "Revenue left after cost of goods sold. Higher means stronger pricing power.",
-        "ranges_text": "Healthy: above 20% • Warning: 0–20% • Critical: below 0%",
-        "direction": "higher",
-        "thresholds": {"healthy_min": 0.20, "warning_min": 0.0},
     },
     "net_profit_margin": {
         "label": "Net Profit Margin",
         "explanation": "Bottom-line profit per dollar of revenue. Higher is better.",
-        "ranges_text": "Healthy: above 5% • Warning: 0–5% • Critical: below 0%",
-        "direction": "higher",
-        "thresholds": {"healthy_min": 0.05, "warning_min": 0.0},
     },
 }
+
+_PERCENT_METRICS = {"roe", "gross_margin", "net_profit_margin"}
+
+
+def _fmt_cutoff(metric, value):
+    return f"{value * 100:g}%" if metric in _PERCENT_METRICS else f"{value:g}"
+
+
+# Direction, cut-offs, and range text are derived from the shared thresholds
+# module so chart colors always match the CSP verdict for the same ratio.
+for _metric, _meta in RATIO_METADATA.items():
+    _th = RATIO_THRESHOLDS[_metric]
+    _w, _c = _fmt_cutoff(_metric, _th["warning"]), _fmt_cutoff(_metric, _th["critical"])
+    _meta["direction"] = _th["direction"]
+    if _th["direction"] == "lower":
+        _meta["thresholds"] = {"healthy_max": _th["warning"], "warning_max": _th["critical"]}
+        _meta["ranges_text"] = f"Healthy: {_w} or below • Warning: {_w}–{_c} • Critical: above {_c}"
+    else:
+        _meta["thresholds"] = {"healthy_min": _th["warning"], "warning_min": _th["critical"]}
+        _meta["ranges_text"] = f"Healthy: {_w} or above • Warning: {_c}–{_w} • Critical: below {_c}"
+
 
 # Categorical metadata for verdict-style metrics.
 CATEGORICAL_METADATA = {
     "csp_verdict": {
         "label": "CSP Verdict",
         "explanation": "Output of the CSP solver — overall financial-soundness check on the ratios.",
-        "value_to_score": {"PASS": 0, "WARNING": 1, "FAIL": 2},
+        "value_to_score": {"PASS": 0, "WARNING": 1, "FAIL": 2, "INSUFFICIENT_DATA": 2},
         "score_to_label": {0: "PASS", 1: "WARNING", 2: "FAIL"},
     },
     "anomaly_severity": {
@@ -602,21 +605,8 @@ GREEN, YELLOW, RED, GRAY = "#2ca02c", "#ffbf00", "#d62728", "#cccccc"
 
 
 def _color_for_ratio(metric, value):
-    info = RATIO_METADATA[metric]
-    if value is None:
-        return GRAY
-    th = info["thresholds"]
-    if info["direction"] == "lower":
-        if value <= th["healthy_max"]:
-            return GREEN
-        if value <= th["warning_max"]:
-            return YELLOW
-        return RED
-    if value >= th["healthy_min"]:
-        return GREEN
-    if value >= th["warning_min"]:
-        return YELLOW
-    return RED
+    status = classify(metric, value)
+    return {HEALTHY: GREEN, WARNING: YELLOW, CRITICAL: RED}.get(status, GRAY)
 
 
 def _color_for_categorical(metric, value):
@@ -755,26 +745,25 @@ def _csp_explanation(stock_result):
     """Plain-English explanation of why the CSP returned its verdict."""
     verdict = stock_result["csp_verdict"]
     ratios = stock_result["ratios"]
-    de = ratios.get("debt_to_equity")
-    cr = ratios.get("current_ratio")
-    ic = ratios.get("interest_coverage_ratio")
+
+    missing = missing_required(ratios)
+    if missing:
+        names = ", ".join(RATIO_METADATA[m]["label"] for m in missing)
+        return (
+            f"**CSP verdict: {verdict}**\n\n"
+            f"- Required ratio(s) unavailable: **{names}**. The solver refuses "
+            f"to issue a verdict rather than treating missing data as healthy."
+        )
 
     bullets = []
-    if de is not None and de > 2.0:
-        bullets.append(
-            f"- Debt-to-Equity is **{de:.2f}** (above 2.0) — heavy leverage forces "
-            f"this metric to **warning** or **critical**."
-        )
-    if cr is not None and cr < 1.0:
-        bullets.append(
-            f"- Current Ratio is **{cr:.2f}** (below 1.0) — short-term obligations "
-            f"exceed short-term assets, locking it to **critical**."
-        )
-    if ic is not None and ic < 1.5:
-        bullets.append(
-            f"- Interest Coverage is **{ic:.2f}** (below 1.5) — operating earnings "
-            f"barely cover interest, locking it to **critical**."
-        )
+    for metric, info in RATIO_METADATA.items():
+        value = ratios.get(metric)
+        status = classify(metric, value)
+        if status in (WARNING, CRITICAL):
+            bullets.append(
+                f"- {info['label']} is **{value:.2f}** — **{status}** "
+                f"({info['ranges_text']})."
+            )
 
     if not bullets:
         body = "All measured ratios fall in healthy ranges, so the CSP returns **PASS**."

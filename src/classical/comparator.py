@@ -23,15 +23,20 @@ import matplotlib.pyplot as plt  # noqa: E402  (must come after backend choice)
 from src.classical.anomaly_detector import detect_earnings_anomaly
 from src.classical.csp_solver import FinancialCSP
 from src.classical.knowledge_base import run_compliance_check
+from src.classical.thresholds import RATIO_THRESHOLDS, VERDICT_SEVERITY
 from src.data.loader import get_earnings_history, get_financial_ratios
 
 
 # Verdicts and severities mapped to numeric risk scores; lower = healthier.
-VERDICT_SCORE = {"PASS": 0, "WARNING": 1, "FAIL": 2}
+# INSUFFICIENT_DATA scores like FAIL so unknowns never rank as healthy.
+VERDICT_SCORE = VERDICT_SEVERITY
 SEVERITY_SCORE = {"none": 0, "moderate": 1, "severe": 2}
 
-# Bar colors keyed by CSP verdict (green / yellow / red).
-VERDICT_COLOR = {"PASS": "#2ca02c", "WARNING": "#ffbf00", "FAIL": "#d62728"}
+# Bar colors keyed by CSP verdict (green / yellow / red, gray = no data).
+VERDICT_COLOR = {
+    "PASS": "#2ca02c", "WARNING": "#ffbf00", "FAIL": "#d62728",
+    "INSUFFICIENT_DATA": "#999999",
+}
 
 
 def compare_stocks(tickers):
@@ -103,8 +108,8 @@ def plot_comparison(comparison_results, output_path="data/comparison_chart.png")
     Render two bar charts side by side — D/E and current ratio — with bars
     colored by each stock's CSP verdict (green=PASS, yellow=WARNING, red=FAIL).
 
-    Threshold lines mark the CSP rule cutoffs (D/E > 2.0 and current_ratio
-    < 1.0). Saves to `output_path` and returns the path.
+    Threshold lines mark the critical cut-offs from
+    src/classical/thresholds.py. Saves to `output_path` and returns the path.
     """
     if not comparison_results:
         return None
@@ -121,9 +126,10 @@ def plot_comparison(comparison_results, output_path="data/comparison_chart.png")
     axes[0].bar(tickers, de_values, color=colors)
     axes[0].set_title("Debt-to-Equity Ratio")
     axes[0].set_ylabel("D/E")
+    de_critical = RATIO_THRESHOLDS["debt_to_equity"]["critical"]
     axes[0].axhline(
-        y=2.0, color="gray", linestyle="--", linewidth=0.8,
-        label="warning threshold (2.0)",
+        y=de_critical, color="gray", linestyle="--", linewidth=0.8,
+        label=f"critical threshold ({de_critical})",
     )
     axes[0].legend(fontsize=8, loc="upper right")
     for i, v in enumerate(de_values):
@@ -133,9 +139,10 @@ def plot_comparison(comparison_results, output_path="data/comparison_chart.png")
     axes[1].bar(tickers, cr_values, color=colors)
     axes[1].set_title("Current Ratio")
     axes[1].set_ylabel("Current Ratio")
+    cr_critical = RATIO_THRESHOLDS["current_ratio"]["critical"]
     axes[1].axhline(
-        y=1.0, color="gray", linestyle="--", linewidth=0.8,
-        label="critical threshold (1.0)",
+        y=cr_critical, color="gray", linestyle="--", linewidth=0.8,
+        label=f"critical threshold ({cr_critical})",
     )
     axes[1].legend(fontsize=8, loc="upper right")
     for i, v in enumerate(cr_values):

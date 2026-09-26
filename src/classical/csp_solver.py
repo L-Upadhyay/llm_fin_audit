@@ -6,20 +6,34 @@ constraints, AC-3 arc consistency on binary constraints, and backtracking
 search with forward checking — and applies it to financial-ratio
 classification.
 
-Each ratio (debt_to_equity, current_ratio, interest_coverage_ratio) is a CSP
-variable with the domain {healthy, warning, critical}. The actual numeric
-value of the ratio prunes the domain via unary constraints; the solver then
-assigns a status to each variable, and the highest-severity status decides
-the overall verdict (PASS / WARNING / FAIL).
+Each available ratio (see src/classical/thresholds.py) is a CSP variable
+with the domain {healthy, warning, critical}. The actual numeric value of
+the ratio prunes the domain via unary constraints; the solver then assigns
+a status to each variable, and the highest-severity status decides the
+overall verdict (PASS / WARNING / FAIL, or INSUFFICIENT_DATA when a
+required ratio is missing).
 """
 
 from collections import deque
+
+from src.classical.thresholds import (
+    CRITICAL,
+    FAIL,
+    HEALTHY,
+    INSUFFICIENT_DATA,
+    PASS,
+    RATIO_THRESHOLDS,
+    WARN,
+    WARNING,
+    classify,
+    missing_required,
+)
 
 
 # Domain values, ordered from least to most severe. Order matters: backtracking
 # iterates in domain order, so unconstrained variables default to "healthy"
 # rather than the search arbitrarily picking "critical".
-DEFAULT_DOMAIN = ["healthy", "warning", "critical"]
+DEFAULT_DOMAIN = [HEALTHY, WARNING, CRITICAL]
 
 
 class Variable:
@@ -243,180 +257,56 @@ class FinancialCSP:
         backtracking, and return an overall verdict.
 
         Verdict rules:
+            - a required ratio is missing        -> INSUFFICIENT_DATA
             - any variable assigned "critical"  -> FAIL
             - any variable assigned "warning"   -> WARNING
             - otherwise                          -> PASS
             - unsatisfiable CSP                  -> FAIL
+
+        Thresholds live in src/classical/thresholds.py. Each ratio's value
+        picks a band; the band becomes a unary constraint on that ratio's
+        variable (critical band -> must be critical, warning band -> at
+        least warning). Optional ratios that are missing are skipped, but
+        missing REQUIRED_RATIOS fail closed rather than defaulting to PASS.
         """
         # Reset state so solve() is idempotent across calls.
         self.variables = {}
         self.constraints = []
 
-        # --- D/E ---------------------------------------------------------
-        de = ratios_dict.get("debt_to_equity")
-        if de is not None:
-            self.add_variable("debt_to_equity", list(DEFAULT_DOMAIN))
-            if de > 2.0:
-                # Highly leveraged firms cannot be classified as healthy.
-                self.add_constraint(Constraint(
-                    ["debt_to_equity"],
-                    lambda a: a["debt_to_equity"] in ("warning", "critical"),
-                    "debt_to_equity > 2.0 -> warning or critical",
-                ))
-            elif de > 1.0:
-                # Moderately leveraged — flag as warning but not critical.
-                self.add_constraint(Constraint(
-                    ["debt_to_equity"],
-                    lambda a: a["debt_to_equity"] in ("warning", "critical"),
-                    "debt_to_equity 1.0-2.0 -> warning",
-                ))
+        if missing_required(ratios_dict):
+            return INSUFFICIENT_DATA
 
-        # --- Current ratio ----------------------------------------------
-        cr = ratios_dict.get("current_ratio")
-        if cr is not None:
-            self.add_variable("current_ratio", list(DEFAULT_DOMAIN))
-            if cr < 1.0:
-                # Cannot cover short-term obligations -> critical.
+        for metric in RATIO_THRESHOLDS:
+            value = ratios_dict.get(metric)
+            band = classify(metric, value)
+            if band is None:
+                continue
+            self.add_variable(metric, list(DEFAULT_DOMAIN))
+            if band == CRITICAL:
+                # Bind `metric` as a default arg — a bare closure would see
+                # only the loop's final value.
                 self.add_constraint(Constraint(
-                    ["current_ratio"],
-                    lambda a: a["current_ratio"] == "critical",
-                    "current_ratio < 1.0 -> critical",
+                    [metric],
+                    lambda a, m=metric: a[m] == CRITICAL,
+                    f"{metric} = {value:.3f} -> critical",
                 ))
-            elif cr < 1.5:
-                # Thin short-term cushion -> warning.
+            elif band == WARNING:
                 self.add_constraint(Constraint(
-                    ["current_ratio"],
-                    lambda a: a["current_ratio"] in ("warning", "critical"),
-                    "current_ratio 1.0-1.5 -> warning",
-                ))
-
-        # --- Interest coverage ------------------------------------------
-        # Skip the variable entirely if the loader couldn't compute it.
-        ic = ratios_dict.get("interest_coverage_ratio")
-        if ic is not None:
-            self.add_variable("interest_coverage_ratio", list(DEFAULT_DOMAIN))
-            if ic < 1.5:
-                # Operating earnings barely cover interest -> critical.
-                self.add_constraint(Constraint(
-                    ["interest_coverage_ratio"],
-                    lambda a: a["interest_coverage_ratio"] == "critical",
-                    "interest_coverage_ratio < 1.5 -> critical",
-                ))
-            elif ic < 3.0:
-                # Earnings cover interest but with limited headroom -> warning.
-                self.add_constraint(Constraint(
-                    ["interest_coverage_ratio"],
-                    lambda a: a["interest_coverage_ratio"] in ("warning", "critical"),
-                    "interest_coverage_ratio 1.5-3.0 -> warning",
-                ))
-
-        # --- P/E ratio --------------------------------------------------
-        # Valuation gauge: a very high trailing P/E suggests the market
-        # is pricing in growth that may not materialize.
-        pe = ratios_dict.get("pe_ratio")
-        if pe is not None:
-            self.add_variable("pe_ratio", list(DEFAULT_DOMAIN))
-            if pe > 100:
-                self.add_constraint(Constraint(
-                    ["pe_ratio"],
-                    lambda a: a["pe_ratio"] == "critical",
-                    "pe_ratio > 100 -> critical (severely overvalued)",
-                ))
-            elif pe > 50:
-                self.add_constraint(Constraint(
-                    ["pe_ratio"],
-                    lambda a: a["pe_ratio"] in ("warning", "critical"),
-                    "pe_ratio > 50 -> warning (overvalued)",
-                ))
-
-        # --- Return on Equity -------------------------------------------
-        # Profitability gauge: how much profit is generated per dollar of
-        # shareholder equity. Negative ROE means the firm is destroying
-        # equity, which is treated as critical.
-        roe = ratios_dict.get("roe")
-        if roe is not None:
-            self.add_variable("roe", list(DEFAULT_DOMAIN))
-            if roe < 0:
-                self.add_constraint(Constraint(
-                    ["roe"],
-                    lambda a: a["roe"] == "critical",
-                    "roe < 0 -> critical (destroying equity)",
-                ))
-            elif roe < 0.05:
-                self.add_constraint(Constraint(
-                    ["roe"],
-                    lambda a: a["roe"] in ("warning", "critical"),
-                    "roe < 0.05 -> warning (low returns)",
-                ))
-
-        # --- Gross margin -----------------------------------------------
-        # Pricing-power gauge: revenue minus cost of goods sold divided by
-        # revenue. Negative margin means the firm sells below cost.
-        gm = ratios_dict.get("gross_margin")
-        if gm is not None:
-            self.add_variable("gross_margin", list(DEFAULT_DOMAIN))
-            if gm < 0:
-                self.add_constraint(Constraint(
-                    ["gross_margin"],
-                    lambda a: a["gross_margin"] == "critical",
-                    "gross_margin < 0 -> critical (selling below cost)",
-                ))
-            elif gm < 0.20:
-                self.add_constraint(Constraint(
-                    ["gross_margin"],
-                    lambda a: a["gross_margin"] in ("warning", "critical"),
-                    "gross_margin < 0.20 -> warning (thin pricing power)",
-                ))
-
-        # --- Net profit margin ------------------------------------------
-        # Bottom-line profitability after every expense. Negative means
-        # the firm posts a net loss.
-        npm = ratios_dict.get("net_profit_margin")
-        if npm is not None:
-            self.add_variable("net_profit_margin", list(DEFAULT_DOMAIN))
-            if npm < 0:
-                self.add_constraint(Constraint(
-                    ["net_profit_margin"],
-                    lambda a: a["net_profit_margin"] == "critical",
-                    "net_profit_margin < 0 -> critical (net loss)",
-                ))
-            elif npm < 0.05:
-                self.add_constraint(Constraint(
-                    ["net_profit_margin"],
-                    lambda a: a["net_profit_margin"] in ("warning", "critical"),
-                    "net_profit_margin < 0.05 -> warning (thin bottom line)",
-                ))
-
-        # --- Quick ratio ------------------------------------------------
-        # Stricter liquidity check than the current ratio: excludes
-        # inventory, so it captures whether the firm could pay short-term
-        # obligations without having to sell stock.
-        qr = ratios_dict.get("quick_ratio")
-        if qr is not None:
-            self.add_variable("quick_ratio", list(DEFAULT_DOMAIN))
-            if qr < 0.5:
-                self.add_constraint(Constraint(
-                    ["quick_ratio"],
-                    lambda a: a["quick_ratio"] == "critical",
-                    "quick_ratio < 0.5 -> critical (severe liquidity gap)",
-                ))
-            elif qr < 1.0:
-                self.add_constraint(Constraint(
-                    ["quick_ratio"],
-                    lambda a: a["quick_ratio"] in ("warning", "critical"),
-                    "quick_ratio < 1.0 -> warning (tight liquidity)",
+                    [metric],
+                    lambda a, m=metric: a[m] in (WARNING, CRITICAL),
+                    f"{metric} = {value:.3f} -> warning",
                 ))
 
         # --- Solve -------------------------------------------------------
         if not self.ac3():
-            return "FAIL"
+            return FAIL
         assignment = self.backtrack()
         if assignment is None:
-            return "FAIL"
+            return FAIL
 
         statuses = set(assignment.values())
-        if "critical" in statuses:
-            return "FAIL"
-        if "warning" in statuses:
-            return "WARNING"
-        return "PASS"
+        if CRITICAL in statuses:
+            return FAIL
+        if WARNING in statuses:
+            return WARN
+        return PASS

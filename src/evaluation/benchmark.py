@@ -33,6 +33,7 @@ from agno.models.ollama import Ollama  # noqa: E402
 from src.classical.anomaly_detector import detect_earnings_anomaly  # noqa: E402
 from src.classical.csp_solver import FinancialCSP  # noqa: E402
 from src.classical.knowledge_base import run_compliance_check  # noqa: E402
+from src.classical.thresholds import VERDICT_SEVERITY  # noqa: E402
 from src.data.loader import get_earnings_history, get_financial_ratios  # noqa: E402
 from src.llm.agno_agents import MODEL_ID, FinancialAnalysisTeam  # noqa: E402
 
@@ -65,11 +66,11 @@ def run_classical_only(ticker):
     eps_values = list(earnings.get("quarterly_eps", {}).values())
     anomaly = detect_earnings_anomaly(eps_values)
 
-    # Overall verdict = most severe of CSP and KB outcomes.
-    severity = {"PASS": 0, "WARNING": 1, "FAIL": 2}
+    # Overall verdict = most severe of CSP and KB outcomes. On a tie at the
+    # top (FAIL vs INSUFFICIENT_DATA) the CSP verdict comes first and wins.
     overall = max(
         (csp_verdict, kb["verdict"]),
-        key=lambda v: severity.get(v, 0),
+        key=lambda v: VERDICT_SEVERITY.get(v, 0),
     )
 
     return {

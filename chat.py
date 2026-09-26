@@ -55,7 +55,10 @@ EXAMPLE_QUESTIONS = [
     "Should I be concerned about this stock?",
 ]
 
-VERDICT_STYLE = {"PASS": "green", "WARNING": "yellow", "FAIL": "red"}
+VERDICT_STYLE = {
+    "PASS": "green", "WARNING": "yellow", "FAIL": "red",
+    "INSUFFICIENT_DATA": "magenta",
+}
 SEVERITY_STYLE = {"none": "green", "moderate": "yellow", "severe": "red"}
 
 

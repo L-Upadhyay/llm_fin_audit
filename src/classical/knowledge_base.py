@@ -10,6 +10,16 @@ Used by the compliance layer to flag firms whose ratio profile triggers
 a chain of risk rules ending in `flag_for_review`.
 """
 
+from src.classical.thresholds import (
+    CRITICAL,
+    FAIL,
+    INSUFFICIENT_DATA,
+    PASS,
+    WARN,
+    classify,
+    missing_required,
+)
+
 
 class Clause:
     """
@@ -108,12 +118,22 @@ def default_compliance_kb():
 # End-to-end compliance check
 # ---------------------------------------------------------------------- #
 
+# Base symptom facts: each fires when its ratio falls in the critical band
+# defined in src/classical/thresholds.py.
+SYMPTOM_FACTS = {
+    "debt_to_equity": "debt_to_equity_high",          # aggressive leverage
+    "current_ratio": "current_ratio_low",             # can't cover short-term obligations
+    "interest_coverage_ratio": "interest_coverage_low",  # earnings barely cover interest
+}
+
+
 def run_compliance_check(ratios_dict):
     """
     Translate raw financial ratios into base facts, run forward chaining,
     and return the rules that fired plus an overall verdict.
 
     Verdict rules:
+        - a required ratio is missing        -> INSUFFICIENT_DATA
         - flag_for_review derived            -> FAIL
         - any rule fired (but no flag)       -> WARNING
         - no rules fired                     -> PASS
@@ -123,31 +143,18 @@ def run_compliance_check(ratios_dict):
           "base_facts":       facts asserted from the ratio thresholds,
           "derived_facts":    facts produced by forward chaining (in order),
           "triggered_rules":  human-readable strings of the clauses that fired,
-          "verdict":          "PASS" / "WARNING" / "FAIL",
+          "missing_ratios":   required ratios that were unavailable,
+          "verdict":          "PASS" / "WARNING" / "FAIL" / "INSUFFICIENT_DATA",
         }
     """
     kb = default_compliance_kb()
 
     # --- Convert numeric ratios into base symptom facts -------------------
     base_facts = []
-
-    de = ratios_dict.get("debt_to_equity")
-    if de is not None and de > 2.0:
-        # Aggressive leverage relative to equity cushion.
-        kb.tell("debt_to_equity_high")
-        base_facts.append("debt_to_equity_high")
-
-    cr = ratios_dict.get("current_ratio")
-    if cr is not None and cr < 1.0:
-        # Short-term obligations exceed short-term assets.
-        kb.tell("current_ratio_low")
-        base_facts.append("current_ratio_low")
-
-    ic = ratios_dict.get("interest_coverage_ratio")
-    if ic is not None and ic < 1.5:
-        # Operating earnings barely cover interest expense.
-        kb.tell("interest_coverage_low")
-        base_facts.append("interest_coverage_low")
+    for metric, fact in SYMPTOM_FACTS.items():
+        if classify(metric, ratios_dict.get(metric)) == CRITICAL:
+            kb.tell(fact)
+            base_facts.append(fact)
 
     # --- Run inference ----------------------------------------------------
     derived_facts = kb.forward_chain()
@@ -161,16 +168,21 @@ def run_compliance_check(ratios_dict):
                 break
 
     # --- Verdict ----------------------------------------------------------
-    if kb.ask("flag_for_review"):
-        verdict = "FAIL"
+    # Missing data fails closed: an empty fact base must not read as PASS.
+    missing = missing_required(ratios_dict)
+    if missing:
+        verdict = INSUFFICIENT_DATA
+    elif kb.ask("flag_for_review"):
+        verdict = FAIL
     elif derived_facts:
-        verdict = "WARNING"
+        verdict = WARN
     else:
-        verdict = "PASS"
+        verdict = PASS
 
     return {
         "base_facts": base_facts,
         "derived_facts": derived_facts,
         "triggered_rules": triggered_rules,
+        "missing_ratios": missing,
         "verdict": verdict,
     }

@@ -31,6 +31,7 @@ VERDICT_STYLE = {
     "PASS": "green",
     "WARNING": "yellow",
     "FAIL": "red",
+    "INSUFFICIENT_DATA": "magenta",
 }
 SEVERITY_STYLE = {
     "none": "green",
