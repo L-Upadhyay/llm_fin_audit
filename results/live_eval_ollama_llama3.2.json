@@ -1,0 +1,117 @@
+{
+  "provider": "ollama:llama3.2",
+  "conditions": {
+    "llm_only": {
+      "runs": 93,
+      "errors": 0,
+      "median_seconds": 6.48,
+      "verdict_contradictions": 0,
+      "answers": 93,
+      "checkable_claims": 206,
+      "claims_per_answer": 2.22,
+      "claim_error_rate": 0.9709,
+      "claim_error_ci95": [
+        0.9379,
+        0.9866
+      ],
+      "answers_without_checkable_numbers": 0.2151,
+      "answers_with_error": 0.7849,
+      "answers_with_error_ci95": [
+        0.691,
+        0.8563
+      ],
+      "unverifiable_per_answer": 0.12,
+      "untracked_numbers_per_answer": 5.35
+    },
+    "team": {
+      "runs": 93,
+      "errors": 0,
+      "median_seconds": 11.01,
+      "verdict_contradictions": 0,
+      "answers": 93,
+      "checkable_claims": 95,
+      "claims_per_answer": 1.02,
+      "claim_error_rate": 0.5053,
+      "claim_error_ci95": [
+        0.4065,
+        0.6036
+      ],
+      "answers_without_checkable_numbers": 0.7204,
+      "answers_with_error": 0.1398,
+      "answers_with_error_ci95": [
+        0.0835,
+        0.2246
+      ],
+      "unverifiable_per_answer": 0.03,
+      "untracked_numbers_per_answer": 1.2
+    },
+    "pipeline_first_attempt": {
+      "runs": 93,
+      "errors": 0,
+      "median_seconds": 3.97,
+      "verdict_contradictions": 0,
+      "answers": 93,
+      "checkable_claims": 396,
+      "claims_per_answer": 4.26,
+      "claim_error_rate": 0.0328,
+      "claim_error_ci95": [
+        0.0193,
+        0.0554
+      ],
+      "answers_without_checkable_numbers": 0.0108,
+      "answers_with_error": 0.129,
+      "answers_with_error_ci95": [
+        0.0754,
+        0.2121
+      ],
+      "unverifiable_per_answer": 0,
+      "untracked_numbers_per_answer": 0.56
+    },
+    "pipeline_after_rewrite": {
+      "runs": 93,
+      "errors": 0,
+      "median_seconds": 3.97,
+      "verdict_contradictions": 0,
+      "answers": 93,
+      "checkable_claims": 390,
+      "claims_per_answer": 4.19,
+      "claim_error_rate": 0.0103,
+      "claim_error_ci95": [
+        0.004,
+        0.0261
+      ],
+      "answers_without_checkable_numbers": 0.0108,
+      "answers_with_error": 0.043,
+      "answers_with_error_ci95": [
+        0.0169,
+        0.1054
+      ],
+      "unverifiable_per_answer": 0,
+      "untracked_numbers_per_answer": 0.56
+    },
+    "pipeline_final": {
+      "runs": 93,
+      "errors": 0,
+      "median_seconds": 3.97,
+      "verdict_contradictions": 0,
+      "answers": 93,
+      "checkable_claims": 390,
+      "claims_per_answer": 4.19,
+      "claim_error_rate": 0.0,
+      "claim_error_ci95": [
+        0.0,
+        0.0098
+      ],
+      "answers_without_checkable_numbers": 0.0108,
+      "answers_with_error": 0.0,
+      "answers_with_error_ci95": [
+        0.0,
+        0.0397
+      ],
+      "unverifiable_per_answer": 0,
+      "untracked_numbers_per_answer": 0.56,
+      "rewrites": 12,
+      "corrections": 4
+    }
+  }
+}
