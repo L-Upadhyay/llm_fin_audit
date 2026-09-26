@@ -11,9 +11,11 @@
 ## What This Project Does
 Hybrid classical-AI + LLM system that catches when LLM financial agents hallucinate numbers, break hard constraints, or misread compliance rules — and corrects them using a deterministic classical layer.
 
-Two cooperating layers:
-1. Classical layer (deterministic) — CSP solver, KB forward chaining, anomaly detector, comparator
-2. LLM layer (Agno + Ollama llama3.2) — multi-agent team that CANNOT output a verdict until classical layer signs off
+Three layers:
+1. Classical layer (deterministic) — CSP solver, KB forward chaining, anomaly detector, consistency constraints
+2. LLM layer — verified single-call pipeline (default) or legacy Agno multi-agent team; verdict always from the CSP
+3. Verification layer — extracts every number/verdict label from the LLM's text, checks it against the facts,
+   triggers one rewrite with feedback, then corrects remaining errors in place ("0.89 [corrected from 1.43]")
 
 ## File Structure
 src/
@@ -28,7 +30,20 @@ llm/
 agno_agents.py        — DataAgent, AnalysisAgent, ComplianceAgent, FinancialAnalysisTeam
 evaluation/
 benchmark.py          — 3-condition evaluation harness (classical-only, LLM-only, hybrid)
-formatting.py             — shared display helpers (price/market-cap formatting, response cleaning)
+consistency.py        — accounting-identity constraints on source data (quick <= current, net <= gross margin, ...)
+data/facts.py           — build_facts(ticker): everything the classical layer knows; the LLM's only input
+llm/
+pipeline.py           — AuditPipeline: facts -> 1 LLM call (JSON) -> verify -> 1 rewrite -> correct
+providers.py          — ollama:<model>, openai:<model> (OpenAI-compatible); LLM_PROVIDER env var
+routing.py            — price-question and second-ticker detection
+verification/
+claims.py             — rule-based claim extraction (prose, tables, heading+bullet, comparisons, verdicts)
+verifier.py           — rounding-aware checks, feedback text, in-place corrections
+evaluation/
+snapshot.py           — freezes facts for 31 tickers -> data/fixtures/facts_snapshot.json
+injection.py          — injected-error precision/recall of the verifier (offline, in CI)
+live_eval.py          — llm_only vs team vs pipeline on real model output -> results/
+formatting.py             — shared display helpers (price/market-cap formatting, response cleaning, recommendation labels)
 tests/                    — 43 pytest tests (38 offline, 5 network)
 app.py                    — Streamlit web app (Analysis, Compare, Chat tabs)
 chat.py                   — Terminal interactive chatbot
@@ -44,6 +59,9 @@ run_agent.py              — Terminal agent demo
 - All classical components must remain independently testable
 
 ### LLM layer
+- Default engine is AuditPipeline; FinancialAnalysisTeam is kept as a legacy baseline for evaluation
+- Every LLM call goes through a provider with MAX_OUTPUT_TOKENS and REQUEST_TIMEOUT_S (llama3.2 can loop at temperature 0)
+- Never let unverified LLM numbers reach the user from the pipeline; the verifier must stay deterministic (no LLM judge)
 - LLM cannot output financial verdict without CSP solver verifying first
 - HOLD/WATCH/AVOID recommendation ALWAYS driven by CSP verdict, never LLM opinion
 - HOLD = CSP PASS (green), WATCH = CSP WARNING (yellow), AVOID = CSP FAIL (red), NO VERDICT = INSUFFICIENT_DATA
@@ -54,8 +72,9 @@ run_agent.py              — Terminal agent demo
 - Always run pytest after any change
 - Never break existing tests to add new features
 - Any test that touches yfinance or Ollama MUST be marked @pytest.mark.network
-- Offline run: pytest -v -m "not network" → 38 tests (this is what CI runs, plus ruff)
-- Full run:    pytest -v → 43 tests, requires internet
+- Offline run: pytest -v -m "not network" (this is what CI runs, plus ruff)
+- Full run:    pytest -v, requires internet
+- Any verifier bug found in real output gets a unit test in tests/test_verifier.py
 
 ### Git
 - Commit after every working feature
@@ -121,22 +140,24 @@ Triggered by: vs, versus, compare, between, which is better, or, and — plus a 
 
 ## Known Issues / Future Work
 - Two-ticker chat comparison: live data panels work, text formatting messy
-- llama3.2 tool calling unreliable — workaround: pre-fetch + inject
-- Benchmark harness functional but full 50-100 scenario sweep not run (time constraint)
+- llama3.2 tool calling unreliable — the legacy team often returns delegation chatter with no numbers
+- Claim extraction misses paraphrased metrics and value-before-name phrasing (0% on the "hard" injection family)
+- Qualitative claims ("MSFT is critical", "healthy") are not verified — only numbers and verdict labels
 - Earnings call sentiment (nomic-embed-text) not implemented (descoped per Kalathur Apr 27 guidance)
 - Transfer pricing component not implemented (descoped per Kalathur Apr 27 guidance)
 
 ## How to Run
 ```bash
-conda activate spring_2026
+conda activate spring_2026   # or: python -m venv .venv
 pip install -r requirements.txt
 ollama serve && ollama pull llama3.2
 streamlit run app.py                # web app (recommended demo surface)
 python chat.py                      # terminal chatbot
 python run_demo.py                  # classical demo, no Ollama needed
-pytest -v -m "not network"          # 38 offline tests
-pytest -v                           # 43 tests, needs internet
-python -m src.evaluation.benchmark  # AAPL + MSFT 3-condition benchmark
+pytest -v -m "not network"          # offline tests (CI)
+python -m src.evaluation.injection  # verifier precision/recall on injected errors
+python -m src.evaluation.live_eval  # llm_only vs team vs pipeline (needs Ollama, ~35 min)
+python -m src.evaluation.snapshot   # refresh the facts snapshot (changes eval ground truth)
 ```
 
 ## AI Tool Disclosure

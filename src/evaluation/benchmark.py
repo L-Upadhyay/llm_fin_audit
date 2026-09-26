@@ -1,5 +1,10 @@
 """
-Evaluation harness for llm_fin_audit.
+Original evaluation harness (superseded — kept for the course write-up).
+
+Use src/evaluation/live_eval.py instead: it checks every number in each
+answer against a frozen facts snapshot, scores all conditions, and
+reports confidence intervals. This module's keyword "stance" heuristic
+and 3-ticker run are what the README's Limitations section refers to.
 
 Compares three experimental conditions on the same ticker + question:
 
