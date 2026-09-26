@@ -42,7 +42,8 @@ Answer the user's question using ONLY the facts provided as JSON.
 
 Rules:
 - Every number you write must come from the facts. You may round to two decimals. Never use numbers from memory.
-- roe, gross_margin and net_profit_margin are fractions: 0.2715 means 27.15%.
+- Copy values exactly as formatted in the facts: percentages already include "%" and market cap already includes T/B/M.
+- debt_to_equity, current_ratio, quick_ratio, interest_coverage_ratio and pe_ratio are plain multiples (write 1.34, never 134% or 1.34%).
 - If a value is null, say it is unavailable. Do not estimate it.
 - csp_verdict is the official verdict for each ticker. Do not contradict it and do not invent your own buy/sell recommendation.
 - If data_quality_issues or missing_required_ratios are present, mention them as caveats.

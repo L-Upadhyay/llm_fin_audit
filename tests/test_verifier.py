@@ -220,6 +220,18 @@ def test_per_ratio_labels_check_that_ratios_band():
     ]
 
 
+def test_verdict_reference_after_the_label():
+    # From the llama3.2 live eval (SBUX / VZ / WMT): all three are correct.
+    facts = {"AAPL": FACTS["AAPL"]}  # csp FAIL, compliance WARNING
+    for text in (
+        "Verdict: FAIL (csp_verdict), WARNING (compliance_verdict).",
+        "Compliance_verdict is WARNING, but csp_verdict is FAIL.",
+        "Caveat: this reflects the 'WARNING' compliance verdict.",
+    ):
+        report = verify_text(text, facts, "AAPL")
+        assert report.contradicted == [], text
+
+
 def test_correction_markers_are_not_reread():
     text = "AAPL's current ratio is 0.89 [corrected from 1.43] and the CSP verdict is FAIL [corrected from PASS]."
     report = verify_text(text, {"AAPL": FACTS["AAPL"]}, "AAPL")

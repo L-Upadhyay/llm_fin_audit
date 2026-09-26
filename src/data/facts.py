@@ -57,18 +57,43 @@ def build_facts(ticker):
     return facts
 
 
-def prompt_view(facts):
-    """Compact copy of the facts for the prompt (rounded, no raw EPS dates)."""
-    def rnd(v):
-        return round(v, 4) if isinstance(v, float) else v
+_PERCENT_RATIOS = ("roe", "gross_margin", "net_profit_margin")
 
+
+def _display(key, value):
+    """
+    Pre-format values the way they should be written.
+
+    In the first live evaluation, 22 of 39 errors in llama3.2's drafts were
+    unit slips: ROE 0.1223 written as "0.1223%" instead of 12.23%, and
+    market caps off by 1000x. Giving the model the finished string removes
+    the conversion step it gets wrong.
+    """
+    if value is None or not isinstance(value, (int, float)):
+        return value
+    if key in _PERCENT_RATIOS:
+        return f"{value * 100:.2f}%"
+    if key == "market_cap":
+        for scale, suffix in ((1e12, "T"), (1e9, "B"), (1e6, "M")):
+            if abs(value) >= scale:
+                return f"${value / scale:.2f}{suffix}"
+        return f"${value:,.0f}"
+    if key in ("dividend_yield", "price_change_percent"):
+        return f"{value:.2f}%"
+    if key == "volume":
+        return f"{int(value):,}"
+    return round(value, 4)
+
+
+def prompt_view(facts):
+    """Copy of the facts for the prompt: pre-formatted, no raw EPS dates."""
     view = {
         "ticker": facts["ticker"],
         "csp_verdict": facts["csp_verdict"],
         "compliance_verdict": facts["kb_verdict"],
         "compliance_rules_fired": facts["kb_triggered_rules"],
-        "ratios": {k: rnd(v) for k, v in facts["ratios"].items()},
-        "live_quote": {k: rnd(v) for k, v in facts["realtime"].items()},
+        "ratios": {k: _display(k, v) for k, v in facts["ratios"].items()},
+        "live_quote": {k: _display(k, v) for k, v in facts["realtime"].items()},
         "earnings_anomalies": facts["anomaly_summary"],
     }
     # Only include caveats that exist; an empty list invites the model to

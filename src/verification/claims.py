@@ -179,7 +179,15 @@ _VERDICT_RE = re.compile(r"\b(PASS|WARNING|FAIL|HOLD|WATCH|AVOID|INSUFFICIENT_DA
 # Annotations the verifier itself inserts; never re-read them as claims.
 CORRECTION_MARKER_RE = re.compile(r"\[(?:corrected from|unverified:)[^\]]*\]")
 _COMPLIANCE_RE = re.compile(r"complian|knowledge\s+base|\bKB\b", re.IGNORECASE)
-_CSP_RE = re.compile(r"\bCSP\b|constraint|overall|recommendation", re.IGNORECASE)
+# "csp_verdict" must match too: "_" is a word character, so \bCSP\b misses it.
+_CSP_RE = re.compile(r"\bcsp(?:_verdict)?\b|constraint|overall|recommendation", re.IGNORECASE)
+# A reference written right after the label: "WARNING (compliance_verdict)",
+# "the 'WARNING' compliance verdict".
+_TRAILING_REF_RE = re.compile(
+    r"^['\"’)\s]*\(?\s*(?:the\s+)?(?P<kb>complian\w*|knowledge\s+base|kb\b)|"
+    r"^['\"’)\s]*\(?\s*(?:the\s+)?(?P<csp>csp\w*|constraint\w*|overall)",
+    re.IGNORECASE,
+)
 
 
 @dataclass
@@ -393,6 +401,9 @@ def extract_claims(text, tickers, primary):
             if spec.source == "ratios":
                 refs.append((a.end(), spec.key))
         _, metric = max(refs, default=(-1, "verdict"))
+        trailing = _TRAILING_REF_RE.match(text[m.end():m.end() + 40])
+        if trailing:
+            metric = "compliance_verdict" if trailing.group("kb") else "verdict"
         kind = "status" if metric not in ("verdict", "compliance_verdict") else "verdict"
         claims.append(Claim(kind, metric, _ticker_at(m.start(), mentions, primary),
                             m.start(), m.end(), m.group(0),
