@@ -94,10 +94,16 @@ _TICKER_STOPWORDS = {
     "COULD", "SHALL", "MIGHT", "MAY", "CAN", "SAY", "SAID",
     # Affirmation / negation
     "YES", "NOT", "ANY", "ALL", "SOME", "EACH", "BOTH",
+    # Single letters that are words, not tickers
+    "I", "A",
 }
 
 
-_TICKER_RE = re.compile(r"\b[A-Z]{2,5}\b")
+# A ticker is either a $cashtag in any case ("$nvda") or a 1-5 letter token
+# the user actually typed in upper case ("NVDA", "F"). Matching against the
+# original text — not question.upper() — is what stops ordinary words like
+# "debt" or "peers" from being read as tickers.
+_TICKER_RE = re.compile(r"\$([A-Za-z]{1,5})\b|\b([A-Z]{1,5})\b")
 
 # Comparison signal — only one of these in the question puts us in compare
 # mode. This prevents "Tell me about AAPL" from being misread as a
@@ -116,20 +122,23 @@ def _detect_second_ticker(question: str, primary: str):
 
     Two-step detection: first the question must contain an explicit
     comparison signal ('vs', 'or', 'and', 'compare', 'between', etc.).
-    Only then do we scan for an uppercase 2-5-letter token that isn't the
-    primary ticker and isn't a known English/finance stopword. Returns
-    None if either step fails.
+    Only then do we look for a $cashtag or an upper-case 1-5 letter token
+    (as typed by the user) that isn't the primary ticker and isn't a known
+    English/finance stopword. Returns None if either step fails.
+
+    Lower-case tickers without a '$' ("aapl vs msft") are not detected —
+    the trade-off for not mistaking ordinary words for symbols.
     """
     if not question:
         return None
     if not _COMPARISON_SIGNALS.search(question):
         return None
     primary = (primary or "").upper()
-    upper = question.upper()
-    for match in _TICKER_RE.findall(upper):
+    for cashtag, bare in _TICKER_RE.findall(question):
+        match = (cashtag or bare).upper()
         if match == primary:
             continue
-        if match in _TICKER_STOPWORDS:
+        if bare and match in _TICKER_STOPWORDS:
             continue
         return match
     return None
