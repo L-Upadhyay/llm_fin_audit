@@ -2,7 +2,7 @@
 
 import pytest
 
-from src.llm.agno_agents import _detect_second_ticker
+from src.llm.routing import detect_second_ticker
 
 
 @pytest.mark.parametrize("question, expected", [
@@ -20,5 +20,5 @@ from src.llm.agno_agents import _detect_second_ticker
     # No comparison signal -> no comparison, even with a second symbol
     ("Tell me about MSFT", None),
 ])
-def test_detect_second_ticker(question, expected):
-    assert _detect_second_ticker(question, "AAPL") == expected
+def testdetect_second_ticker(question, expected):
+    assert detect_second_ticker(question, "AAPL") == expected

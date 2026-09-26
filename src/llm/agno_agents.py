@@ -20,7 +20,6 @@ fall back to a placeholder string when calling tools.
 """
 
 import json
-import re
 
 from agno.agent import Agent
 from agno.models.ollama import Ollama
@@ -35,122 +34,19 @@ from src.data.loader import (
     get_financial_ratios,
     get_realtime_price,
 )
-from src.formatting import (
-    COMPARISON_HEADER as _COMPARISON_HEADER,
-    LIVE_BLOCK_HEADER as _LIVE_BLOCK_HEADER,
-    fmt_market_cap,
-    fmt_price,
-    fmt_volume,
-    strip_comparison_block,  # noqa: F401  (re-exported for callers)
-    strip_live_quote_block,  # noqa: F401  (re-exported for callers)
+from src.formatting import (  # noqa: F401  (several are re-exported for callers)
+    RECOMMENDATION_BY_VERDICT,
+    format_comparison_block as _format_comparison_block,
+    format_live_quote_block as _format_live_quote_block,
+    recommendation_for_verdict,
+    recommendation_line as _recommendation_line,
+    strip_comparison_block,
+    strip_live_quote_block,
 )
-
-
-# Keywords that mark a question as needing live market data. Used both for
-# upstream prompt injection (so the LLM always has a fresh quote to quote
-# from) and for the routing rules in the team coordinator.
-_PRICE_KEYWORDS = (
-    "price", "current price", "stock price", "share price",
-    "today", "today's", "open", "high", "low",
-    "volume",
-    "52-week", "52 week", "fifty-two week", "fifty two week",
-    "market cap", "market capitalization", "marketcap",
-    "value", "valued", "worth", "trading at", "how much",
-    "quote",
+from src.llm.routing import (  # noqa: F401
+    detect_second_ticker as _detect_second_ticker,
+    is_price_question as _is_price_question,
 )
-
-
-def _is_price_question(question: str) -> bool:
-    """True if the user's question is about live market data."""
-    if not question:
-        return False
-    low = question.lower()
-    return any(kw in low for kw in _PRICE_KEYWORDS)
-
-
-# Common 2-5-letter uppercase words that look like tickers but aren't.
-# Used by the comparison-mode detector to filter out conjunctions, pronouns,
-# acronyms, and finance jargon before picking the second ticker.
-_TICKER_STOPWORDS = {
-    # English connectives, prepositions, pronouns, adverbs
-    "OR", "AND", "VS", "FOR", "TO", "AT", "IN", "ON", "OF", "BY", "AS",
-    "IF", "IS", "IT", "BE", "DO", "GO", "AM", "AN", "WE", "US", "MY",
-    "ME", "HE", "SO", "NO", "OK", "THE", "ABOUT", "AROUND", "AGAIN",
-    "ALSO", "EVEN", "ELSE", "OVER", "UNDER", "AFTER", "BEFORE", "FROM",
-    "INTO", "ONTO", "WITH", "WITHIN", "ALONG", "ACROSS", "JUST", "ONLY",
-    "VERY", "MUCH", "EVERY", "OTHER", "SAME", "THAN", "THEN", "HERE",
-    "THERE", "NOW", "TODAY", "WEEK", "MONTH", "YEAR", "STOCK", "SHARE",
-    "PRICE", "VALUE", "WORTH", "RATIO",
-    # Common pronouns / determiners that hit the regex after upper()-ing
-    # the question (e.g. "Is this company..." -> "IS THIS COMPANY...").
-    "THIS", "THAT", "THESE", "THOSE", "ITS", "HIS", "HER", "HIM",
-    "OUR", "OUT", "OFF", "DUE", "OWN", "ALL", "ANY", "ONE", "TWO",
-    "TEN", "SIX", "FEW", "TOO", "TIE",
-    # Auxiliary / state verbs
-    "GET", "GOT", "PUT", "HAS", "HAD", "WAY", "USE", "SEE", "LET",
-    "MAY", "OWN", "RUN", "TRY", "WHY", "YET",
-    # Question words
-    "WHAT", "HOW", "WHY", "WHO", "WHEN", "WHERE", "WHICH",
-    # Comparison / trading verbs
-    "BUY", "SELL", "HOLD", "OWN", "ADD", "DROP", "GAIN", "LOSS",
-    "BETTER", "WORSE", "BEST", "WORST", "MORE", "LESS", "GOOD",
-    # Common finance acronyms / unit labels
-    "USD", "EUR", "GBP", "JPY", "LLC", "INC", "LTD", "CEO", "CFO", "CTO",
-    "API", "ETF", "IPO", "USA", "ESG", "AI", "ML", "NLP", "PE", "EPS",
-    "ROE", "ROI", "ROA", "EBIT", "FY", "YOY", "QOQ", "MOM", "DOD",
-    # Auxiliary / modal verbs
-    "ARE", "WAS", "HAS", "HAD", "HAVE", "WERE", "BEEN", "WILL", "WOULD",
-    "COULD", "SHALL", "MIGHT", "MAY", "CAN", "SAY", "SAID",
-    # Affirmation / negation
-    "YES", "NOT", "ANY", "ALL", "SOME", "EACH", "BOTH",
-    # Single letters that are words, not tickers
-    "I", "A",
-}
-
-
-# A ticker is either a $cashtag in any case ("$nvda") or a 1-5 letter token
-# the user actually typed in upper case ("NVDA", "F"). Matching against the
-# original text — not question.upper() — is what stops ordinary words like
-# "debt" or "peers" from being read as tickers.
-_TICKER_RE = re.compile(r"\$([A-Za-z]{1,5})\b|\b([A-Z]{1,5})\b")
-
-# Comparison signal — only one of these in the question puts us in compare
-# mode. This prevents "Tell me about AAPL" from being misread as a
-# comparison just because "TELL" or "ABOUT" matches the ticker regex.
-_COMPARISON_SIGNALS = re.compile(
-    r"\b(vs|versus|compare[d]?|compared\s+to|compared\s+with|comparison|"
-    r"between|which\s+is|or|and|than|better|worse|stronger|weaker|"
-    r"outperform[s]?|outperforming|differ[s]?|different)\b",
-    re.IGNORECASE,
-)
-
-
-def _detect_second_ticker(question: str, primary: str):
-    """
-    Scan the question for a second ticker symbol distinct from `primary`.
-
-    Two-step detection: first the question must contain an explicit
-    comparison signal ('vs', 'or', 'and', 'compare', 'between', etc.).
-    Only then do we look for a $cashtag or an upper-case 1-5 letter token
-    (as typed by the user) that isn't the primary ticker and isn't a known
-    English/finance stopword. Returns None if either step fails.
-
-    Lower-case tickers without a '$' ("aapl vs msft") are not detected —
-    the trade-off for not mistaking ordinary words for symbols.
-    """
-    if not question:
-        return None
-    if not _COMPARISON_SIGNALS.search(question):
-        return None
-    primary = (primary or "").upper()
-    for cashtag, bare in _TICKER_RE.findall(question):
-        match = (cashtag or bare).upper()
-        if match == primary:
-            continue
-        if bare and match in _TICKER_STOPWORDS:
-            continue
-        return match
-    return None
 
 
 def _build_per_ticker_block(ticker: str) -> dict:
@@ -169,153 +65,7 @@ def _build_per_ticker_block(ticker: str) -> dict:
     }
 
 
-def _format_comparison_block(comparison: list) -> str:
-    """
-    Render a markdown side-by-side table comparing two tickers.
-
-    Used as the auto-prepended block in compare-mode chat answers, so the
-    user always sees a structured comparison even if the LLM rambles.
-    """
-    if not comparison or len(comparison) < 2:
-        return ""
-
-    a, b = comparison[0], comparison[1]
-    ta, tb = a["ticker"], b["ticker"]
-    ra, rb = a["ratios"], b["ratios"]
-    rta, rtb = a["realtime"], b["realtime"]
-
-    price, mc = fmt_price, fmt_market_cap
-
-    def ratio(v):
-        return "n/a" if v is None else f"{v:.3f}"
-
-    def pct(v):
-        return "n/a" if v is None else f"{v * 100:.2f}%"
-
-    rows = [
-        ("Current Price", price(rta.get("current_price")), price(rtb.get("current_price"))),
-        ("52-Week Range",
-         f"{price(rta.get('fifty_two_week_low'))} – {price(rta.get('fifty_two_week_high'))}",
-         f"{price(rtb.get('fifty_two_week_low'))} – {price(rtb.get('fifty_two_week_high'))}"),
-        ("Market Cap", mc(rta.get("market_cap")), mc(rtb.get("market_cap"))),
-        ("Debt-to-Equity", ratio(ra.get("debt_to_equity")), ratio(rb.get("debt_to_equity"))),
-        ("Current Ratio", ratio(ra.get("current_ratio")), ratio(rb.get("current_ratio"))),
-        ("P/E", ratio(ra.get("pe_ratio")), ratio(rb.get("pe_ratio"))),
-        ("ROE", pct(ra.get("roe")), pct(rb.get("roe"))),
-        ("Net Profit Margin", pct(ra.get("net_profit_margin")), pct(rb.get("net_profit_margin"))),
-        ("**CSP Verdict**", f"**{a['csp_verdict']}**", f"**{b['csp_verdict']}**"),
-        ("**Recommendation**",
-         f"{a['recommendation']['emoji']} {a['recommendation']['label']}",
-         f"{b['recommendation']['emoji']} {b['recommendation']['label']}"),
-    ]
-
-    lines = [
-        f"{_COMPARISON_HEADER} {ta} vs {tb}:**",
-        "",
-        f"| Metric | {ta} | {tb} |",
-        "|---|---|---|",
-    ]
-    for label, va, vb in rows:
-        lines.append(f"| {label} | {va} | {vb} |")
-    return "\n".join(lines)
-
-
-def _format_live_quote_block(quote: dict) -> str:
-    """
-    Format a get_realtime_price() result as a markdown block.
-
-    Used to prepend authoritative live numbers to chat responses so that
-    price questions are answered correctly even if the LLM skips the
-    tool call.
-    """
-    if not quote or quote.get("error"):
-        return ""
-
-    price, vol = fmt_price, fmt_volume
-
-    def change(c, p):
-        if c is None or p is None:
-            return "n/a"
-        arrow = "▲" if c > 0 else ("▼" if c < 0 else "•")
-        sign = "+" if c > 0 else ""
-        return f"{arrow} {sign}${c:,.2f} ({sign}{p:.2f}%)"
-
-    div_yield = quote.get("dividend_yield")
-    beta = quote.get("beta")
-
-    lines = [
-        f"{_LIVE_BLOCK_HEADER} {quote.get('ticker', '?')} — "
-        f"as of {quote.get('timestamp', 'now')}:**",
-        f"- Current Price: {price(quote.get('current_price'))}  "
-        f"{change(quote.get('price_change'), quote.get('price_change_percent'))}",
-        f"- Previous Close: {price(quote.get('previous_close'))}",
-        f"- Today's Range: {price(quote.get('day_low'))} – {price(quote.get('day_high'))}",
-        f"- 52-Week Range: {price(quote.get('fifty_two_week_low'))} – "
-        f"{price(quote.get('fifty_two_week_high'))}",
-        f"- Volume: {vol(quote.get('volume'))}",
-        f"- Market Cap: {fmt_market_cap(quote.get('market_cap'))}",
-        f"- Dividend Yield: {'n/a' if div_yield is None else f'{div_yield:.2f}%'}",
-        f"- Beta: {'n/a' if beta is None else f'{beta:.2f}'}",
-        f"- Next Earnings: {quote.get('next_earnings_date') or 'n/a'}",
-    ]
-    return "\n".join(lines)
-
-
 MODEL_ID = "llama3.2"
-
-
-# ---------------------------------------------------------------------------
-# Recommendation derived from the CSP verdict
-# ---------------------------------------------------------------------------
-# The recommendation shown at the top of every chat answer is driven by the
-# classical CSP verdict, never by the LLM's opinion. Keeping this as a single
-# source of truth means the colored banner in chat.py / app.py and the
-# Recommendation section the LLM is instructed to emit always agree.
-
-RECOMMENDATION_BY_VERDICT = {
-    "PASS": {
-        "label": "HOLD",
-        "emoji": "✅",
-        "summary": "Ratios are within healthy ranges",
-        "color": "green",
-    },
-    "WARNING": {
-        "label": "WATCH",
-        "emoji": "⚠️",
-        "summary": "Monitor these metrics closely",
-        "color": "yellow",
-    },
-    "FAIL": {
-        "label": "AVOID/REVIEW",
-        "emoji": "🔴",
-        "summary": "One or more metrics are critical",
-        "color": "red",
-    },
-    "INSUFFICIENT_DATA": {
-        "label": "NO VERDICT",
-        "emoji": "❔",
-        "summary": "Required ratios unavailable — cannot assess",
-        "color": "white",
-    },
-}
-
-
-def recommendation_for_verdict(verdict: str) -> dict:
-    """Return the {label, emoji, summary, color} block for a CSP verdict."""
-    return RECOMMENDATION_BY_VERDICT.get(
-        verdict,
-        {
-            "label": "UNKNOWN",
-            "emoji": "❔",
-            "summary": "Classical layer did not return a verdict",
-            "color": "white",
-        },
-    )
-
-
-def _recommendation_line(rec: dict) -> str:
-    """Render the exact 'Recommendation' line we want at the end of answers."""
-    return f"{rec['emoji']} {rec['label']} — {rec['summary']}"
 
 
 # Sentinels we've seen LLMs hallucinate when an instruction says "the user's
