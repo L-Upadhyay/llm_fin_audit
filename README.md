@@ -10,7 +10,7 @@ Asked whether Apple was financially healthy, llama3.2 with no tools answered:
 
 > Debt-to-Equity: **0.12** … Current Ratio: **1.43** … Apple appears financially healthy.
 
-At the time, the filings behind that answer gave **1.34** and **0.89**. A current ratio below 1.0 means short-term liabilities exceed short-term assets. The model was fluent, specific, and wrong. For an equity analyst or an auditor, that is the failure that matters: the model gives confident numbers with nothing to trace them back to.
+The actual figures at the time, from the annual balance sheet data the system pulls, were **1.34** and **0.89**. A current ratio below 1.0 means short-term liabilities exceed short-term assets. The model was fluent, specific, and wrong. For an equity analyst or an auditor, that is the failure that matters: the model gives confident numbers with nothing to trace them back to.
 
 ## How it works
 
