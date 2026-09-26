@@ -175,6 +175,7 @@ VERDICT_ALIASES = {
     "INSUFFICIENT_DATA": "INSUFFICIENT_DATA",
 }
 _VERDICT_RE = re.compile(r"\b(PASS|WARNING|FAIL|HOLD|WATCH|AVOID|INSUFFICIENT_DATA)\b")
+_COMPLIANCE_RE = re.compile(r"complian|knowledge\s+base|\bKB\b", re.IGNORECASE)
 
 
 @dataclass
@@ -363,7 +364,12 @@ def extract_claims(text, tickers, primary):
     claims = unique
 
     for m in _VERDICT_RE.finditer(text):
-        claims.append(Claim("verdict", "verdict", _ticker_at(m.start(), mentions, primary),
+        # A label in a sentence about compliance refers to the KB verdict,
+        # not the CSP verdict.
+        s_start, _ = _sentence_bounds(text, m.start())
+        metric = ("compliance_verdict"
+                  if _COMPLIANCE_RE.search(text[s_start:m.start()]) else "verdict")
+        claims.append(Claim("verdict", metric, _ticker_at(m.start(), mentions, primary),
                             m.start(), m.end(), m.group(0),
                             verdict=VERDICT_ALIASES[m.group(0)]))
 

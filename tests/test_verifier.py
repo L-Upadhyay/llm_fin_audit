@@ -18,6 +18,7 @@ FACTS = {
         },
         "realtime": {"current_price": 341.07, "market_cap": 3.93e12, "beta": 1.21},
         "csp_verdict": "FAIL",
+        "kb_verdict": "WARNING",
     },
     "MSFT": {
         "ratios": {
@@ -132,6 +133,16 @@ def test_verdict_labels():
     report = verify_text("AAPL is rated FAIL. MSFT is rated FAIL too.", facts, "AAPL")
     assert [(c.claim.ticker, c.status) for c in report.checked] == [
         ("AAPL", SUPPORTED), ("MSFT", CONTRADICTED),
+    ]
+
+
+def test_compliance_labels_check_the_kb_verdict():
+    report = verify_text(
+        "The CSP verdict is FAIL. The compliance verdict is FAIL.",
+        {"AAPL": FACTS["AAPL"]}, "AAPL",
+    )
+    assert [(c.claim.metric, c.status) for c in report.checked] == [
+        ("verdict", SUPPORTED), ("compliance_verdict", CONTRADICTED),
     ]
 
 

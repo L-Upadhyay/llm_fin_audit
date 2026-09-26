@@ -41,7 +41,8 @@ def _fact_for(claim, facts):
     if ticker_facts is None:
         return None
     if claim.kind == "verdict":
-        return ticker_facts.get("csp_verdict")
+        key = "kb_verdict" if claim.metric == "compliance_verdict" else "csp_verdict"
+        return ticker_facts.get(key)
     spec = METRICS_BY_KEY[claim.metric]
     return (ticker_facts.get(spec.source) or {}).get(claim.metric)
 
@@ -144,7 +145,9 @@ class VerificationReport:
         lines = []
         for c in self.contradicted:
             cl = c.claim
-            label = "verdict" if cl.kind == "verdict" else METRICS_BY_KEY[cl.metric].label
+            label = ("compliance verdict" if cl.metric == "compliance_verdict"
+                     else "verdict" if cl.kind == "verdict"
+                     else METRICS_BY_KEY[cl.metric].label)
             if cl.kind == "comparison":
                 word = "below" if cl.comparator == "lt" else "above"
                 lines.append(f"- {cl.ticker} {label}: you said it is {word} {cl.raw}, "
