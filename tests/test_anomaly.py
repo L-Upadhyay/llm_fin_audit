@@ -45,6 +45,21 @@ def test_search_worst_period():
     assert worst["index"] == 3
 
 
+def test_severe_is_reachable_with_eight_quarters():
+    # With mean/std z-scores and n = 8, |z| can never exceed ~2.47, so
+    # "severe" was unreachable. The robust score must flag this.
+    eps = [1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, -100.0]
+    result = detect_earnings_anomaly(eps)
+    assert result["severity"] == "severe"
+    assert result["worst_quarter"]["index"] == 7
+
+
+def test_constant_series_has_no_anomalies():
+    result = detect_earnings_anomaly([2.0] * 8)
+    assert result["severity"] == "none"
+    assert result["anomalies"] == []
+
+
 if __name__ == "__main__":
     test_stable_earnings_no_anomaly()
     test_one_clear_anomaly()

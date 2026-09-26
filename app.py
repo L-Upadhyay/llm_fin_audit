@@ -595,7 +595,7 @@ CATEGORICAL_METADATA = {
     },
     "anomaly_severity": {
         "label": "Earnings Anomaly Severity",
-        "explanation": "Severity of unusual quarters in the last 8 quarters (>2 std deviations from mean).",
+        "explanation": "Severity of unusual quarters in the last 8 quarters (robust median/MAD z-score above 3.5).",
         "value_to_score": {"none": 0, "moderate": 1, "severe": 2},
         "score_to_label": {0: "none", 1: "moderate", 2: "severe"},
     },

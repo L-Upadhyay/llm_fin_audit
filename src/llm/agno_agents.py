@@ -505,7 +505,7 @@ def check_compliance_tool(ticker: str) -> str:
 @tool
 def detect_anomalies_tool(ticker: str) -> str:
     """
-    Detect quarterly EPS anomalies (>2 standard deviations from the mean)
+    Detect quarterly EPS anomalies (robust median/MAD z-score above 3.5)
     for the given ticker.
 
     `ticker` MUST be the literal stock symbol such as 'AAPL'. Do NOT pass

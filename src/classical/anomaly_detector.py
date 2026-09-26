@@ -2,7 +2,7 @@
 Earnings anomaly detector.
 
 Three classical signals over a quarterly EPS series:
-  - statistical anomaly detection (>2 standard deviations from the mean)
+  - robust statistical anomaly detection (modified z-score, median/MAD)
   - linear search for the single worst quarter
   - trend classification (improving / declining / stable)
 
@@ -13,31 +13,74 @@ quarter, last index = oldest), matching the loader's output convention.
 import numpy as np
 
 
+# Modified z-score cut-offs (Iglewicz & Hoaglin). 3.5 is the standard
+# outlier threshold; 5.0 marks a quarter that looks like a different regime.
+MODERATE_Z = 3.5
+SEVERE_Z = 5.0
+
+# Scale factors that make MAD / mean-absolute-deviation comparable to a
+# standard deviation for normally distributed data.
+_MAD_SCALE = 0.6745
+_MEANAD_SCALE = 1.253314
+
+
+def _robust_z_scores(arr):
+    """
+    Modified z-scores based on the median and MAD.
+
+    The classic (x - mean) / std score is a poor fit for 8 quarters: the
+    outlier inflates the std it is measured against, and with n = 8 no
+    point can ever exceed |z| = (n - 1) / sqrt(n) ~= 2.47. Median and MAD
+    are barely moved by a single outlier, so one bad quarter stands out.
+
+    If more than half the values are identical MAD is 0; fall back to the
+    mean absolute deviation around the median. If that is also 0 the
+    series is constant and every score is 0.
+    """
+    median = float(np.median(arr))
+    deviations = arr - median
+    mad = float(np.median(np.abs(deviations)))
+    if mad > 0:
+        return _MAD_SCALE * deviations / mad, median, mad
+    mean_ad = float(np.mean(np.abs(deviations)))
+    if mean_ad > 0:
+        return deviations / (_MEANAD_SCALE * mean_ad), median, mad
+    return np.zeros_like(arr), median, mad
+
+
 def detect_earnings_anomaly(earnings_history):
     """
-    Flag any quarter whose EPS lies more than 2 standard deviations from
-    the historical mean.
+    Flag any quarter whose modified z-score exceeds MODERATE_Z.
 
     Returns:
         {
-          "mean":          mean EPS,
-          "std":           sample standard deviation (ddof=1),
+          "mean":          mean EPS (for display),
+          "std":           sample standard deviation (for display),
+          "median":        median EPS,
+          "mad":           median absolute deviation,
           "anomalies":     [{"index": i, "eps": v, "z_score": z}, ...],
           "worst_quarter": the anomaly with the largest |z|, or None,
           "severity":      "none" | "moderate" | "severe",
           "summary":       plain-English explanation,
         }
 
+    `z_score` is the robust (modified) z-score, not (x - mean) / std.
+
     Severity rules:
-      - "none"     : no quarter exceeds 2 std deviations
-      - "moderate" : at least one |z| > 2 but all < 3
-      - "severe"   : at least one |z| >= 3 (looks like a different distribution)
+      - "none"     : no quarter reaches |z| > MODERATE_Z
+      - "moderate" : at least one |z| > MODERATE_Z, all < SEVERE_Z
+      - "severe"   : at least one |z| >= SEVERE_Z
+
+    Known limitation: EPS is not seasonally adjusted, so a business with a
+    strong holiday quarter can show a recurring spike.
     """
     n = len(earnings_history)
     if n < 2:
         return {
             "mean": None,
             "std": None,
+            "median": None,
+            "mad": None,
             "anomalies": [],
             "worst_quarter": None,
             "severity": "none",
@@ -46,26 +89,20 @@ def detect_earnings_anomaly(earnings_history):
 
     arr = np.asarray(earnings_history, dtype=float)
     mean = float(arr.mean())
-    # Sample standard deviation (ddof=1) — more conservative for small N
-    # than the population std.
     std = float(arr.std(ddof=1))
+    z_scores, median, mad = _robust_z_scores(arr)
 
-    anomalies = []
-    if std > 0:
-        for i, v in enumerate(arr):
-            z = (float(v) - mean) / std
-            if abs(z) > 2.0:
-                anomalies.append({
-                    "index": i,
-                    "eps": float(v),
-                    "z_score": float(z),
-                })
+    anomalies = [
+        {"index": i, "eps": float(v), "z_score": float(z)}
+        for i, (v, z) in enumerate(zip(arr, z_scores))
+        if abs(z) > MODERATE_Z
+    ]
 
     worst = max(anomalies, key=lambda a: abs(a["z_score"])) if anomalies else None
 
     if not anomalies:
         severity = "none"
-    elif any(abs(a["z_score"]) >= 3.0 for a in anomalies):
+    elif any(abs(a["z_score"]) >= SEVERE_Z for a in anomalies):
         severity = "severe"
     else:
         severity = "moderate"
@@ -73,19 +110,21 @@ def detect_earnings_anomaly(earnings_history):
     if severity == "none":
         summary = (
             f"No anomalies detected across {n} quarters "
-            f"(mean EPS = {mean:.2f}, std = {std:.2f})."
+            f"(median EPS = {median:.2f}, mean = {mean:.2f})."
         )
     else:
         summary = (
             f"{len(anomalies)} anomalous quarter(s) out of {n} "
-            f"(mean EPS = {mean:.2f}, std = {std:.2f}). "
+            f"(median EPS = {median:.2f}, mean = {mean:.2f}). "
             f"Worst: index {worst['index']} with EPS {worst['eps']:.2f} "
-            f"(z = {worst['z_score']:.2f}). Severity: {severity}."
+            f"(robust z = {worst['z_score']:.2f}). Severity: {severity}."
         )
 
     return {
         "mean": mean,
         "std": std,
+        "median": median,
+        "mad": mad,
         "anomalies": anomalies,
         "worst_quarter": worst,
         "severity": severity,
