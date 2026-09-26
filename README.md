@@ -1,70 +1,63 @@
 # llm_fin_audit
 
-A hybrid classical-AI + LLM system that catches when a language-model financial agent hallucinates numbers, breaks hard constraints, or misreads compliance rules — and corrects it.
+[![CI](https://github.com/L-Upadhyay/llm_fin_audit/actions/workflows/ci.yml/badge.svg)](https://github.com/L-Upadhyay/llm_fin_audit/actions/workflows/ci.yml)
 
-> **BU MET CS 664 Term Project — Spring 2026. Student: Lucky Upadhyay.**
+A deterministic audit layer between an LLM and anyone relying on its financial analysis. Classical AI (constraint satisfaction, forward-chaining rules, robust anomaly detection) runs on real market data and owns the verdict. The LLM only writes the explanation.
 
-## 💡 What it does
+## Why
 
-LLMs are confidently wrong about finance. They invent ratios, miss covenants, and label distressed companies "healthy." That's fine for chat, fatal for audit.
+Asked whether Apple was financially healthy, llama3.2 with no tools answered:
 
-I built llm_fin_audit to wrap an LLM agent team with a deterministic classical layer that:
+> Debt-to-Equity: **0.12** … Current Ratio: **1.43** … Apple appears financially healthy.
 
-- pulls real ratios from yfinance,
-- runs a CSP solver to flag constraint violations,
-- runs a forward-chaining knowledge base to fire compliance rules,
-- runs a statistical anomaly detector on quarterly EPS,
+At the time, the filings behind that answer gave **1.34** and **0.89**. A current ratio below 1.0 means short-term liabilities exceed short-term assets. The model was fluent, specific, and wrong. For an equity analyst or an auditor, that is the failure that matters: the model gives confident numbers with nothing to trace them back to.
 
-…and only lets the LLM's verdict reach the user after the classical layer signs off. I benchmark three experimental conditions side by side — classical-only, LLM-only, and hybrid — so the cost of removing the safety net is measurable, not hand-waved.
+## How it works
 
-## ✨ Features
+```
+                 ┌──────────────── Classical layer (deterministic) ────────────────┐
+  yfinance ────► │ loader ──► CSP solver         ──► PASS / WARNING / FAIL /        │
+                 │        │                           INSUFFICIENT_DATA             │
+                 │        ├─► Horn-clause KB     ──► fired compliance rules        │
+                 │        └─► EPS anomaly detector ─► flagged quarters + severity  │
+                 └───────────────────────────────┬──────────────────────────────────┘
+                                                 │ verdict + facts (JSON)
+                                                 ▼
+                 ┌──────────────── LLM layer (Agno + Ollama) ──────────────────────┐
+                 │ DataAgent · AnalysisAgent · ComplianceAgent → coordinator        │
+                 │ writes the narrative; tools call back into the classical layer  │
+                 └───────────────────────────────┬──────────────────────────────────┘
+                                                 ▼
+                     recommendation banner (from the CSP) + narrative
+```
 
-- **Financial data loader** (`src/data/loader.py`) — yfinance-backed ratio + EPS extraction with graceful handling of missing line items
-- **CSP solver** (`src/classical/csp_solver.py`) — Variable, Constraint, FinancialCSP with AC-3 arc consistency and backtracking + forward checking, written from scratch
-- **Forward-chaining knowledge base** (`src/classical/knowledge_base.py`) — Horn-clause Clause / KnowledgeBase engine with a six-rule compliance ruleset
-- **Earnings anomaly detector** (`src/classical/anomaly_detector.py`) — z-score outlier flagging, linear-search worst-quarter lookup, half-vs-half trend classification
-- **Agno multi-agent team** (`src/llm/agno_agents.py`) — DataAgent / AnalysisAgent / ComplianceAgent on Ollama llama3.2, each calling into the classical layer through @tool wrappers
-- **Live Market Data** (`src/data/loader.py`) — real-time price, day change ▲▼, previous close, today's range, 52-week range, volume, market cap, dividend yield, beta, and next earnings date — all pulled live from yfinance with a timestamp
-- **HOLD / WATCH / AVOID recommendation system** — verdict driven by the classical CSP result, never the LLM's opinion; rendered as a colored banner in both the web app and the terminal chatbot
-- **Multi-stock comparator** (`src/classical/comparator.py`) — side-by-side comparison, composite-risk ranking, and matplotlib charts
-- **Evaluation harness** (`src/evaluation/benchmark.py`) — runs classical-only, LLM-only, and hybrid on the same ticker, captures response times, and flags constraint violations
-- **CLI surfaces** — `run_demo.py` (rich-terminal classical demo), `run_agent.py` (multi-agent demo), `chat.py` (interactive non-coder chatbot)
-- **Streamlit web app** (`app.py`) — three-tab UI: single-stock Analysis, dynamic Compare (add/remove up to 6 tickers, metric multiselect, color-coded thresholds, deep-dive per stock), and an LLM Chat tab gated behind Ollama
+- **The verdict never comes from the LLM.** `FinancialCSP` computes it before the model runs. The HOLD / WATCH / AVOID banner is derived from it and appended even if the model omits it.
+- **Missing data fails closed.** If leverage or liquidity ratios are unavailable (unknown ticker, rate limit, banks without a current ratio), the answer is `INSUFFICIENT_DATA`, never a default PASS.
+- **Live prices are injected, not recalled.** Price questions get a fresh yfinance quote in the prompt and in a structured panel, so the model can't answer from stale training data.
 
-All classical components have pytest coverage under `tests/`.
+## Components
 
-## 🏗️ Architecture
+| Module | What it does |
+|---|---|
+| `src/classical/thresholds.py` | Single source of truth for ratio cut-offs and verdict labels |
+| `src/classical/csp_solver.py` | CSP from scratch: AC-3 arc consistency, backtracking with forward checking |
+| `src/classical/knowledge_base.py` | Horn-clause KB with forward chaining; leverage/liquidity/solvency risks chain to `flag_for_review` |
+| `src/classical/anomaly_detector.py` | Modified z-score (median/MAD) outlier detection on 8 quarters of EPS |
+| `src/classical/comparator.py` | Multi-ticker comparison and composite risk ranking |
+| `src/data/loader.py` | yfinance ratios (8), EPS history, live quote |
+| `src/llm/agno_agents.py` | Agno team; tools wrap the classical layer; comparison mode for two tickers |
+| `src/evaluation/benchmark.py` | Runs classical-only, LLM-only, and hybrid on the same ticker |
 
-Two cooperating layers — the LLM proposes, the classical layer verifies and corrects.
-
-┌─────────────────────── Classical layer (deterministic) ────────────────────────┐
-│  loader (yfinance) ─► CSP solver       ─► PASS / WARNING / FAIL                │
-│                    ─► Knowledge base   ─► triggered compliance rules           │
-│                    ─► Anomaly detector ─► severity + flagged quarters          │
-└────────────────────────────────────────────────────────────────────────────────┘
-▲
-│  @tool wrappers (return JSON)
-│
-┌──────────────────────── LLM layer (Agno + Ollama) ──────────────────────────┐
-│  DataAgent  ──┐                                                             │
-│  AnalysisAgent├─► FinancialAnalysisTeam coordinator ─► grounded answer      │
-│  ComplianceAgent┘                                                           │
-└─────────────────────────────────────────────────────────────────────────────┘
-
-The LLM cannot output a final verdict until at least one tool call into the classical layer has returned. Every numeric claim in the response is traceable to a yfinance row.
-
-## 🚀 How to run
-
-Clone, install dependencies, then pick an interface.
+## Run it
 
 ```bash
 git clone https://github.com/L-Upadhyay/llm_fin_audit
 cd llm_fin_audit
-conda activate spring_2026
+python -m venv .venv && source .venv/bin/activate   # Python 3.11
 pip install -r requirements.txt
 ```
 
-The web app and chatbot need Ollama running locally with llama3.2 pulled:
+The chat features need [Ollama](https://ollama.com) with llama3.2:
 
 ```bash
 ollama serve
@@ -73,50 +66,28 @@ ollama pull llama3.2
 
 | Interface | Command | Needs Ollama? |
 |---|---|---|
-| Web app | `streamlit run app.py` | Only for the Chat tab |
+| Web app (Analysis / Compare / Chat tabs) | `streamlit run app.py` | Chat tab only |
+| Classical-only terminal demo | `python run_demo.py MSFT` | No |
 | Terminal chatbot | `python chat.py` | Yes |
-| Classical demo | `python run_demo.py` | No |
 | Agent demo | `python run_agent.py` | Yes |
 | Benchmark | `python -m src.evaluation.benchmark` | Yes |
-| Tests | `pytest` | No |
+| Offline tests (CI) | `pytest -m "not network"` | No |
+| All tests | `pytest` | No (needs internet) |
 
-## 🧰 Tech stack
+## Limitations
 
-- **Python 3.11**
-- **Classical AI** — CSP solver, AC-3, forward checking, forward-chaining KB, statistical anomaly detection, all written against the standard library
-- **Data** — yfinance, pandas, numpy
-- **Visualization** — matplotlib, rich, streamlit
-- **LLM** — agno multi-agent framework, ollama runtime, llama3.2 model
-- **Testing** — pytest
+- **The LLM's narrative is not verified yet.** The verdict is deterministic, but numbers the model writes in its explanation are not checked against the source data. In the May 2026 benchmark, the hybrid condition still produced invented figures for MSFT and a malformed tool-call dump for AAPL. The next milestone is a claim verifier that extracts every number from the response and reconciles it against the facts.
+- **The benchmark is small.** It covers 3 tickers, one run each, and uses keyword-based stance detection. Treat `data/benchmark_results.json` as a demo, not an evaluation.
+- **Thresholds are generic, not sector-aware.** A single set of cut-offs is applied to every industry. Apple's sub-1.0 current ratio reflects its working-capital model, not distress, but it still triggers a critical flag.
+- **Mixed periods.** Debt-to-equity and current ratio come from the latest annual balance sheet, while margins, ROE, and quick ratio come from yfinance's trailing figures.
+- **yfinance is a scraper**, not an authoritative filings source.
+- **llama3.2 (3B) is unreliable at multi-agent delegation.** This is why prices and verdicts are pre-fetched and injected, not left to tool calls.
+- **Not investment advice.** HOLD / WATCH / AVOID are labels for ratio-based risk bands.
 
-## 🎓 Course
+## Background
 
-BU MET CS 664 — Artificial Intelligence
-Prof. Suresh Kalathur · Spring 2026
-Student: Lucky Upadhyay (MS Applied Data Analytics)
+This started as my term project for BU MET CS 664 (Artificial Intelligence, Spring 2026) and I'm continuing to develop it. It draws on five years of financial analysis at PwC and EY. Built with Claude Code as a coding assistant.
 
-Modules exercised:
-- **Search** — linear-scan worst-quarter lookup, statistical anomaly detection
-- **Constraint satisfaction** — AC-3 + backtracking + forward checking on the financial-soundness CSP
-- **Knowledge representation & reasoning** — Horn-clause KB with forward chaining
-- **Agents & multi-agent systems** — Agno team coordinating specialist agents over a shared classical toolset
-- **AIMA hierarchy** — Agent / Environment / Problem patterns mirrored across the classical layer
+## License
 
-## 🤖 AI Tool Usage
-
-I built this project with Claude Code (Anthropic) as a coding assistant, in line with BU MET academic-integrity policy on responsible AI use.
-
-I designed and directed every aspect of the project:
-- Identified the research problem — LLM hallucination in financial analysis — drawing on my background in financial analysis at EY and PwC
-- Designed the hybrid architecture that combines classical AI verification with LLM agents
-- Specified the CSP constraint structure, knowledge base rule chains, anomaly thresholds, and multi-agent topology
-- Defined the verification contract between the two layers
-- Made the design trade-offs and validated each component against the AIMA textbook and course materials
-- Reviewed and tested every piece before committing it
-
-Claude Code helped me move faster by:
-- Translating my specifications into Python
-- Generating test scaffolding for the components I designed
-- Drafting documentation that I edited
-
-The architecture, the responsible-AI framing, the choice of techniques, and the evaluation methodology are my own work.
+MIT
