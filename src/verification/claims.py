@@ -135,6 +135,7 @@ class Number:
     decimals: int         # digits after the decimal point, as written
     is_percent: bool
     scale: float          # multiplier applied for T/B/M suffixes (1.0 if none)
+    currency: bool = False  # written with "$"
 
 
 def parse_numbers(text, start=0, end=None):
@@ -162,6 +163,7 @@ def parse_numbers(text, start=0, end=None):
         out.append(Number(
             value=value * scale, start=m.start(), end=m.end(), raw=m.group(0).strip(),
             decimals=decimals, is_percent=suffix in ("%", "percent"), scale=scale,
+            currency=bool(m.group("cur")),
         ))
     return out
 
@@ -204,6 +206,20 @@ class Claim:
     comparator: str = None    # "lt" / "gt" for comparison claims
     verdict: str = None       # normalized verdict for verdict claims
     context: str = field(default="", repr=False)
+
+
+def _compatible(spec, n):
+    """
+    Can this number be a value of this metric at all?
+
+    A "%" value is never a dollar amount and a "$" value is never a ratio.
+    Without this, "$50.68B with a market cap, and a margin of -18.25%"
+    pairs "market cap" with -18.25% and "corrects" it into nonsense
+    (seen in the llama3.2 live evaluation).
+    """
+    if spec.kind == "currency":
+        return not n.is_percent
+    return not n.currency
 
 
 def _sentence_bounds(text, pos):
@@ -287,7 +303,8 @@ def _table_claims(text, tickers, primary, table_spans):
             for ci, (cell, cstart) in enumerate(cells[1:], start=1):
                 if not cell.strip():
                     continue
-                nums = parse_numbers(text, cstart, cstart + len(cell))
+                nums = [x for x in parse_numbers(text, cstart, cstart + len(cell))
+                        if _compatible(spec, x)]
                 if not nums:
                     continue
                 ticker = col_ticker.get(ci, primary if len(col_ticker) == 0 else None)
@@ -335,7 +352,7 @@ def extract_claims(text, tickers, primary):
         )
         s_start, s_end = _sentence_bounds(text, m.start())
         window_end = min(s_end, next_alias, m.end() + 90)
-        nums = parse_numbers(text, m.end(), window_end)
+        nums = [x for x in parse_numbers(text, m.end(), window_end) if _compatible(spec, x)]
 
         # Heading followed by bullets: "**Current Ratio**\n* Value: 1.43"
         if not nums:
@@ -351,7 +368,8 @@ def extract_claims(text, tickers, primary):
                     nl = look_end if nl == -1 else min(nl, look_end)
                     if text[cursor + 1:nl].strip():
                         seen += 1
-                        nums = parse_numbers(text, cursor + 1, nl)
+                        nums = [x for x in parse_numbers(text, cursor + 1, nl)
+                                if _compatible(spec, x)]
                         if nums:
                             s_start = cursor + 1
                             break

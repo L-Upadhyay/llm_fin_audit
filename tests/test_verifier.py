@@ -246,6 +246,15 @@ def test_truncation_is_tolerated():
     assert statuses("The quick ratio is 0.47.", "SBUX", facts) == [("quick_ratio", CONTRADICTED)]
 
 
+def test_units_must_fit_the_metric():
+    # From the llama3.2 live eval (F): "market cap" must not grab a percentage.
+    facts = {"F": {"ratios": {}, "realtime": {"market_cap": 5.068e10}, "csp_verdict": "FAIL"}}
+    text = "F is valued at $50.68B with a market cap, and a profitability ratio of -18.25%."
+    assert verify_text(text, facts, "F").contradicted == []
+    # ...and a ratio must not grab a dollar amount.
+    assert statuses("The current ratio of $341.07 per share") == []
+
+
 def test_correction_markers_are_not_reread():
     text = "AAPL's current ratio is 0.89 [corrected from 1.43] and the CSP verdict is FAIL [corrected from PASS]."
     report = verify_text(text, {"AAPL": FACTS["AAPL"]}, "AAPL")
