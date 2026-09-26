@@ -17,6 +17,7 @@ still available (src/llm/agno_agents.py) as a baseline for evaluation.
 """
 
 import json
+import re
 
 from src.data.facts import build_facts, prompt_view
 from src.formatting import (
@@ -51,15 +52,41 @@ Rules:
 Respond with JSON: {"answer": "<markdown answer>"}"""
 
 
+_PARTIAL_ANSWER_RE = re.compile(r'"answer"\s*:\s*"((?:[^"\\]|\\.)*)', re.DOTALL)
+
+
 def _parse_answer(raw):
-    """Pull the answer out of the model's JSON; fall back to the raw text."""
+    """
+    Pull the answer out of the model's JSON.
+
+    Falls back to salvaging the "answer" string from truncated JSON (output
+    cut off by the token cap), then to the raw text.
+    """
     try:
         data = json.loads(raw)
         if isinstance(data, dict) and isinstance(data.get("answer"), str):
             return data["answer"].strip()
     except (json.JSONDecodeError, TypeError):
         pass
+    m = _PARTIAL_ANSWER_RE.search(raw or "")
+    if m:
+        try:
+            return json.loads(f'"{m.group(1)}"').strip()
+        except json.JSONDecodeError:
+            return m.group(1).replace("\\n", "\n").strip()
     return (raw or "").strip()
+
+
+def _collapse_repeats(text):
+    """Drop exact-duplicate sentences — a safety net for degenerate loops."""
+    seen, kept = set(), []
+    for sentence in re.split(r"(?<=[.!?])\s+", text):
+        key = " ".join(sentence.lower().split())
+        if key and key in seen:
+            continue
+        seen.add(key)
+        kept.append(sentence)
+    return " ".join(kept).strip()
 
 
 def _claim_rows(report):
@@ -96,7 +123,8 @@ class AuditPipeline:
         self.fact_source = fact_source
 
     def _ask(self, user):
-        return _parse_answer(self.provider.complete(SYSTEM_PROMPT, user, ANSWER_SCHEMA))
+        raw = self.provider.complete(SYSTEM_PROMPT, user, ANSWER_SCHEMA)
+        return _collapse_repeats(_parse_answer(raw))
 
     def run(self, ticker, question):
         ticker = ticker.upper()

@@ -22,6 +22,12 @@ DEFAULT_PROVIDER = "ollama:llama3.2"
 TEMPERATURE = 0.0
 SEED = 7
 
+# Hard limits. Schema-constrained decoding can occasionally loop (e.g. a
+# small model emitting whitespace forever); without a cap one bad request
+# blocks the local server for everyone queued behind it.
+MAX_OUTPUT_TOKENS = 800
+REQUEST_TIMEOUT_S = 180
+
 
 class OllamaProvider:
     def __init__(self, model):
@@ -31,14 +37,19 @@ class OllamaProvider:
     def complete(self, system, user, json_schema=None):
         import ollama
 
-        response = ollama.chat(
+        client = ollama.Client(timeout=REQUEST_TIMEOUT_S)
+        response = client.chat(
             model=self.model,
             messages=[
                 {"role": "system", "content": system},
                 {"role": "user", "content": user},
             ],
             format=json_schema,
-            options={"temperature": TEMPERATURE, "seed": SEED},
+            options={"temperature": TEMPERATURE, "seed": SEED,
+                     "num_predict": MAX_OUTPUT_TOKENS,
+                     # Ollama's default 64-token window misses long
+                     # repeated sentences; greedy decoding then loops.
+                     "repeat_penalty": 1.1, "repeat_last_n": 256},
         )
         return response["message"]["content"]
 
@@ -53,7 +64,8 @@ class OpenAICompatibleProvider:
     def complete(self, system, user, json_schema=None):
         import openai
 
-        client = openai.OpenAI(base_url=self.base_url, api_key=self.api_key)
+        client = openai.OpenAI(base_url=self.base_url, api_key=self.api_key,
+                               timeout=REQUEST_TIMEOUT_S)
         kwargs = {}
         if json_schema is not None:
             kwargs["response_format"] = {
@@ -68,6 +80,7 @@ class OpenAICompatibleProvider:
             ],
             temperature=TEMPERATURE,
             seed=SEED,
+            max_tokens=MAX_OUTPUT_TOKENS,
             **kwargs,
         )
         return response.choices[0].message.content or ""

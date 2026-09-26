@@ -3,9 +3,10 @@ Friendly terminal chatbot for llm_fin_audit.
 
 Pick a stock ticker, then ask any plain-English question about its
 financial health. The classical layer (CSP solver, compliance KB,
-anomaly detector) is always run up front to give an at-a-glance summary,
-and the multi-agent team (DataAgent + AnalysisAgent + ComplianceAgent on
-local Ollama llama3.2) handles each free-form question.
+anomaly detector) is always run up front to give an at-a-glance summary.
+Each free-form question goes to the verified pipeline (one LLM call over
+the classical facts, every number checked), or to the original Agno
+multi-agent team with --engine team.
 
 Commands inside the chat loop:
     new   — switch to a different ticker
@@ -17,9 +18,11 @@ Requires:
     ollama pull llama3.2
 
 Usage:
-    python chat.py
+    python chat.py                     # verified pipeline (default)
+    python chat.py --engine team       # legacy multi-agent team
 """
 
+import argparse
 import sys
 
 from rich.columns import Columns
@@ -42,14 +45,14 @@ from src.formatting import (
     strip_comparison_block,
     strip_live_quote_block,
 )
-from src.llm.agno_agents import FinancialAnalysisTeam
 
 
 WELCOME_TEXT = (
     "[bold green]llm_fin_audit[/] — interactive financial-health chatbot\n\n"
     "Pick a stock by ticker (e.g. [bold]AAPL[/], [bold]MSFT[/], [bold]TSLA[/]), "
     "then ask anything in plain English. I'll combine real market data, "
-    "classical constraint checks, and a small team of Llama agents to answer.\n\n"
+    "classical constraint checks, and a local LLM whose numbers are checked "
+    "against the source data.\n\n"
     "Type [bold cyan]help[/] for example questions, "
     "[bold cyan]new[/] to switch tickers, "
     "or [bold cyan]quit[/] to exit."
@@ -283,6 +286,26 @@ def show_response(console, ticker, result):
         title=f"[bold]Answer about {ticker}[/]",
         border_style="magenta",
     ))
+    if isinstance(result, dict):
+        show_verification(console, result.get("verification"))
+
+
+def show_verification(console, verification):
+    """One-line summary of the claim check, plus any in-place corrections."""
+    if not verification:
+        return
+    final, first = verification["final"], verification["first_attempt"]
+    parts = [f"{final['supported']}/{final['claims']} claims verified"]
+    if first["contradicted"]:
+        parts.append(f"{first['contradicted']} wrong on first attempt")
+    if verification["retries"]:
+        parts.append(f"{verification['retries']} rewrite")
+    if final["unverifiable"]:
+        parts.append(f"{final['unverifiable']} without a source")
+    console.print(f"[dim]🔎 {' · '.join(parts)}[/]")
+    for c in verification["corrections"]:
+        console.print(f"[yellow]  corrected {c['ticker']} {c['metric']}: "
+                      f"{c['stated']} → {c['actual']}[/]")
 
 
 def show_error(console, message, hint=None):
@@ -375,17 +398,27 @@ def chat_loop(console, team, ticker):
 # ---------------------------------------------------------------------- #
 
 def main():
+    parser = argparse.ArgumentParser(description="Interactive financial-health chatbot")
+    parser.add_argument("--engine", choices=("pipeline", "team"), default="pipeline",
+                        help="pipeline = verified single call (default); team = Agno agents")
+    args = parser.parse_args()
+
     console = Console()
     show_welcome(console)
 
-    # One-time team initialization. Slow if Ollama hasn't been touched yet.
+    # One-time engine initialization. Slow if Ollama hasn't been touched yet.
     try:
-        with console.status("[cyan]Starting up the agent team..."):
-            team = FinancialAnalysisTeam()
+        with console.status(f"[cyan]Starting up the {args.engine}..."):
+            if args.engine == "team":
+                from src.llm.agno_agents import FinancialAnalysisTeam
+                team = FinancialAnalysisTeam()
+            else:
+                from src.llm.pipeline import AuditPipeline
+                team = AuditPipeline()
     except Exception as e:
         show_error(
             console,
-            f"Couldn't initialize the agent team: {e}",
+            f"Couldn't initialize the {args.engine}: {e}",
             hint="Check that `agno` and `ollama` are installed and that "
                  "Ollama is reachable on localhost.",
         )

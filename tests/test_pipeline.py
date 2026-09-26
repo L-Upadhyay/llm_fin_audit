@@ -90,6 +90,12 @@ def test_non_json_output_falls_back_to_raw_text():
     assert result["answer"] == "AAPL's current ratio is 0.89."
 
 
+def test_repeated_sentences_are_collapsed():
+    looped = "AAPL's current ratio is 0.89. Liquidity is tight. " * 5
+    result = make(ScriptedProvider(looped)).run("AAPL", "How liquid is it?")
+    assert result["answer"] == "AAPL's current ratio is 0.89. Liquidity is tight."
+
+
 def test_get_provider_specs():
     assert isinstance(get_provider("ollama:llama3.2"), OllamaProvider)
     assert isinstance(get_provider("openai:gpt-4o-mini"), OpenAICompatibleProvider)

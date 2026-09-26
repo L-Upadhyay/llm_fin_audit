@@ -111,8 +111,9 @@ _SCALE = {
 }
 
 _COMPARATOR_RE = re.compile(
-    r"\b(?P<lt>below|under|less\s+than|lower\s+than|beneath|short\s+of)\b|"
-    r"\b(?P<gt>above|over|more\s+than|greater\s+than|higher\s+than|exceeds?|exceeding|in\s+excess\s+of)\b",
+    r"\b(?P<lt>below|under|less\s+than|lower\s+than|beneath|short\s+of)\b|(?P<lt_sym>[<≤])|"
+    r"\b(?P<gt>above|over|more\s+than|greater\s+than|higher\s+than|exceeds?|exceeding|in\s+excess\s+of)\b|"
+    r"(?P<gt_sym>[>≥])",
     re.IGNORECASE,
 )
 
@@ -176,6 +177,7 @@ VERDICT_ALIASES = {
 }
 _VERDICT_RE = re.compile(r"\b(PASS|WARNING|FAIL|HOLD|WATCH|AVOID|INSUFFICIENT_DATA)\b")
 _COMPLIANCE_RE = re.compile(r"complian|knowledge\s+base|\bKB\b", re.IGNORECASE)
+_CSP_RE = re.compile(r"\bCSP\b|constraint|overall|recommendation", re.IGNORECASE)
 
 
 @dataclass
@@ -348,7 +350,7 @@ def extract_claims(text, tickers, primary):
         context = text[s_start:max(n.end, min(s_end, len(text)))].strip()
         if comp:
             claims.append(Claim("comparison", spec.key, ticker, n.start, n.end, n.raw,
-                                number=n, comparator="lt" if comp.group("lt") else "gt",
+                                number=n, comparator="lt" if (comp.group("lt") or comp.group("lt_sym")) else "gt",
                                 context=context))
         else:
             claims.append(Claim("value", spec.key, ticker, n.start, n.end, n.raw,
@@ -364,11 +366,14 @@ def extract_claims(text, tickers, primary):
     claims = unique
 
     for m in _VERDICT_RE.finditer(text):
-        # A label in a sentence about compliance refers to the KB verdict,
-        # not the CSP verdict.
+        # Which verdict is this label about? Whichever keyword appears
+        # closest before it in the same sentence: "compliance verdict of
+        # WARNING and a CSP verdict of FAIL" has one of each.
         s_start, _ = _sentence_bounds(text, m.start())
-        metric = ("compliance_verdict"
-                  if _COMPLIANCE_RE.search(text[s_start:m.start()]) else "verdict")
+        prefix = text[s_start:m.start()]
+        last_kb = max((k.end() for k in _COMPLIANCE_RE.finditer(prefix)), default=-1)
+        last_csp = max((k.end() for k in _CSP_RE.finditer(prefix)), default=-1)
+        metric = "compliance_verdict" if last_kb > last_csp else "verdict"
         claims.append(Claim("verdict", metric, _ticker_at(m.start(), mentions, primary),
                             m.start(), m.end(), m.group(0),
                             verdict=VERDICT_ALIASES[m.group(0)]))

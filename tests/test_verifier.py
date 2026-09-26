@@ -68,6 +68,11 @@ def test_comparisons_check_direction():
     assert statuses("The current ratio is above 1.5.") == [("current_ratio", CONTRADICTED)]
 
 
+def test_comparison_symbols():
+    assert statuses("A low current ratio (< 1) signals risk.") == [("current_ratio", SUPPORTED)]
+    assert statuses("Current ratio (> 1.5) is comfortable.") == [("current_ratio", CONTRADICTED)]
+
+
 def test_benchmarks_are_not_claims():
     # "industry average of 1.5" describes the benchmark, not Apple.
     assert statuses("The current ratio is under the industry average of 1.5.") == []
@@ -143,6 +148,16 @@ def test_compliance_labels_check_the_kb_verdict():
     )
     assert [(c.claim.metric, c.status) for c in report.checked] == [
         ("verdict", SUPPORTED), ("compliance_verdict", CONTRADICTED),
+    ]
+
+
+def test_nearest_keyword_decides_which_verdict():
+    report = verify_text(
+        "AAPL has a compliance verdict of WARNING and a CSP verdict of FAIL.",
+        {"AAPL": FACTS["AAPL"]}, "AAPL",
+    )
+    assert [(c.claim.metric, c.status) for c in report.checked] == [
+        ("compliance_verdict", SUPPORTED), ("verdict", SUPPORTED),
     ]
 
 

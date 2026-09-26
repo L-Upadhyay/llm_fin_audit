@@ -59,7 +59,8 @@ SEVERITY_LABEL = {"none": "none", "moderate": "moderate", "severe": "severe"}
 def init_state():
     """One-time defaults so the app survives Streamlit's per-interaction reruns."""
     st.session_state.setdefault("chat_messages", [])
-    st.session_state.setdefault("team", None)
+    st.session_state.setdefault("engines", {})          # engine name -> instance
+    st.session_state.setdefault("chat_engine", PIPELINE_ENGINE)
     st.session_state.setdefault("analysis", None)
     st.session_state.setdefault("chat_ticker", "AAPL")
     # Compare-tab state
@@ -819,10 +820,61 @@ def render_compare_tab():
     st.markdown(_csp_explanation(chosen_result))
 
 
+PIPELINE_ENGINE = "Verified pipeline"
+TEAM_ENGINE = "Agent team (legacy)"
+
+
+def _get_engine(name):
+    """Build the chat engine lazily so Tabs 1-2 load without an LLM."""
+    engines = st.session_state.engines
+    if name not in engines:
+        if name == PIPELINE_ENGINE:
+            from src.llm.pipeline import AuditPipeline
+            engines[name] = AuditPipeline()
+        else:
+            # Imported lazily so the rest of the app loads even if Agno
+            # has issues importing.
+            from src.llm.agno_agents import FinancialAnalysisTeam
+            engines[name] = FinancialAnalysisTeam()
+    return engines[name]
+
+
+_STATUS_ICON = {"supported": "✅", "contradicted": "❌", "unverifiable": "❔"}
+
+
+def render_verification(verification):
+    """One-line verification badge plus an expandable claim-by-claim table."""
+    if not verification:
+        return
+    final, first = verification["final"], verification["first_attempt"]
+    parts = [f"{final['supported']} of {final['claims']} claims verified"]
+    if first["contradicted"]:
+        parts.append(f"{first['contradicted']} wrong on first attempt")
+    if verification["retries"]:
+        parts.append(f"{verification['retries']} rewrite")
+    if verification["corrections"]:
+        parts.append(f"{len(verification['corrections'])} corrected in place")
+    if final["unverifiable"]:
+        parts.append(f"{final['unverifiable']} without a source")
+    st.caption("🔎 " + " · ".join(parts))
+    if verification["claims"]:
+        with st.expander("Claim check"):
+            st.dataframe(
+                pd.DataFrame([
+                    {"": _STATUS_ICON.get(c["status"], ""), "Ticker": c["ticker"],
+                     "Metric": c["metric"], "Stated": c["stated"],
+                     "Source value": c["actual"], "Status": c["status"]}
+                    for c in verification["claims"]
+                ]),
+                hide_index=True, width="stretch",
+            )
+
+
 def render_chat_tab():
-    st.header("Chat with the Agent Team")
+    st.header("Chat")
     ticker = st.session_state.chat_ticker
-    st.caption(f"Currently chatting about: **{ticker}**  "
+    engine_name = st.session_state.chat_engine
+    st.caption(f"Currently chatting about: **{ticker}** · engine: **{engine_name}**  "
                "(set the ticker in the sidebar and click Analyze to switch)")
 
     # Existing history
@@ -838,6 +890,7 @@ def render_chat_tab():
                     if msg.get("recommendation"):
                         _render_recommendation_banner(msg["recommendation"])
             st.markdown(msg["content"])
+            render_verification(msg.get("verification"))
 
     user_input = st.chat_input("Ask anything about this stock...")
     if not user_input:
@@ -848,39 +901,33 @@ def render_chat_tab():
         st.markdown(user_input)
     st.session_state.chat_messages.append({"role": "user", "content": user_input})
 
-    # Lazy-init the team only when the user actually chats.
-    if st.session_state.team is None:
-        with st.spinner("Starting the agent team (Ollama llama3.2)..."):
-            try:
-                # Imported lazily so the rest of the app loads even if Agno
-                # has issues importing.
-                from src.llm.agno_agents import FinancialAnalysisTeam
-                st.session_state.team = FinancialAnalysisTeam()
-            except Exception as e:
-                err = (
-                    f"Couldn't start the agent team: {e}\n\n"
-                    "Make sure Ollama is running (`ollama serve`) and the "
-                    "model is pulled (`ollama pull llama3.2`)."
-                )
-                with st.chat_message("assistant"):
-                    st.error(err)
-                st.session_state.chat_messages.append(
-                    {"role": "assistant", "content": err}
-                )
-                return
+    try:
+        engine = _get_engine(engine_name)
+    except Exception as e:
+        err = (
+            f"Couldn't start the {engine_name}: {e}\n\n"
+            "Make sure Ollama is running (`ollama serve`) and the "
+            "model is pulled (`ollama pull llama3.2`)."
+        )
+        with st.chat_message("assistant"):
+            st.error(err)
+        st.session_state.chat_messages.append({"role": "assistant", "content": err})
+        return
 
-    # Run the team
+    # Run the selected engine
     with st.chat_message("assistant"):
         recommendation = None
         realtime = None
         comparison = None
+        verification = None
         with st.spinner(f"Thinking about {ticker}... (this may take a minute)"):
             try:
-                result = st.session_state.team.run(ticker, user_input)
+                result = engine.run(ticker, user_input)
                 response = clean_agent_response(result.get("text", ""))
                 recommendation = result.get("recommendation")
                 realtime = result.get("realtime")
                 comparison = result.get("comparison")
+                verification = result.get("verification")
                 # Avoid double-rendering: the panels below show the same
                 # numbers the agent prepended in markdown form.
                 if comparison:
@@ -889,7 +936,7 @@ def render_chat_tab():
                     response = strip_live_quote_block(response)
             except Exception as e:
                 response = (
-                    f"The agent team hit a problem: {e}\n\n"
+                    f"The {engine_name} hit a problem: {e}\n\n"
                     "Make sure Ollama is running."
                 )
 
@@ -906,6 +953,7 @@ def render_chat_tab():
             _render_recommendation_banner(recommendation)
 
         st.markdown(response)
+        render_verification(verification)
 
     # Persist banner / panel / text so reruns redraw cleanly.
     st.session_state.chat_messages.append(
@@ -915,6 +963,7 @@ def render_chat_tab():
             "recommendation": recommendation,
             "realtime": realtime,
             "comparison": comparison,
+            "verification": verification,
         }
     )
 
@@ -946,12 +995,19 @@ def main():
             except Exception as e:
                 st.sidebar.error(f"Couldn't analyze {ticker}: {e}")
 
+    st.sidebar.radio(
+        "Chat engine", [PIPELINE_ENGINE, TEAM_ENGINE], key="chat_engine",
+        help="Verified pipeline: one LLM call over the classical facts, every "
+             "number checked and corrected. Agent team: the original Agno "
+             "multi-agent setup, unverified.",
+    )
+
     st.sidebar.markdown("---")
     st.sidebar.caption(
         "**Analysis** and **Compare** use only the classical layer "
         "(CSP + KB + anomaly detector). Manage the comparison list inside "
-        "the **Compare** tab. **Chat** uses the multi-agent team and "
-        "requires Ollama running locally."
+        "the **Compare** tab. **Chat** needs Ollama running locally "
+        "(or an OpenAI-compatible endpoint via `LLM_PROVIDER`)."
     )
 
     # ---------------- Tabs ----------------
